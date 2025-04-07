@@ -6,6 +6,7 @@ import (
 	"expo-open-ota/internal/types"
 	"fmt"
 	"io"
+	"log"
 	"path/filepath"
 	"sync"
 )
@@ -17,57 +18,44 @@ type RuntimeVersionWithStats struct {
 	NumberOfUpdates int    `json:"numberOfUpdates"`
 }
 
-type Bucket interface {
-	GetBranches() ([]string, error)
-	GetRuntimeVersions(branch string) ([]RuntimeVersionWithStats, error)
-	GetUpdates(branch string, runtimeVersion string) ([]types.Update, error)
-	GetFile(update types.Update, assetPath string) (types.BucketFile, error)
-	RequestUploadUrlForFileUpdate(branch string, runtimeVersion string, updateId string, fileName string) (string, error)
-	UploadFileIntoUpdate(update types.Update, fileName string, file io.Reader) error
-	DeleteUpdateFolder(branch string, runtimeVersion string, updateId string) error
-}
-
 type BucketType string
 
 const (
-	S3BucketType    BucketType = "s3"
-	LocalBucketType BucketType = "local"
+	S3BucketType       BucketType = "s3"
+	LocalBucketType    BucketType = "local"
+	FirebaseBucketType BucketType = "firebase"
 )
 
-func ResolveBucketType() BucketType {
-	bucketType := config.GetEnv("STORAGE_MODE")
-	if bucketType == "" || bucketType == "local" {
-		return LocalBucketType
-	}
-	return S3BucketType
+type Bucket interface {
+	GetUpdate(branch string, runtimeVersion string, updateId string) (*types.Update, error)
+	GetFile(branch string, runtimeVersion string, updateId string, fileName string) (io.ReadCloser, error)
+	UploadFileIntoUpdate(update types.Update, fileName string, content io.Reader) error
+	DeleteUpdateFolder(branch string, runtimeVersion string, updateId string) error
+	RequestUploadUrlsForFileUpdates(branch string, runtimeVersion string, updateId string, fileNames []string) ([]types.FileUpdateRequest, error)
 }
 
-var (
-	bucketInstance Bucket
-	once           sync.Once
-)
+var bucket Bucket
+
+func init() {
+	bucketType := config.GetEnv("BUCKET_TYPE")
+	if bucketType == "" {
+		bucketType = string(FirebaseBucketType)
+	}
+
+	var err error
+	switch BucketType(bucketType) {
+	case FirebaseBucketType:
+		bucket, err = NewFirebaseBucket()
+		if err != nil {
+			log.Fatalf("Error creating Firebase bucket: %v", err)
+		}
+	default:
+		log.Fatalf("Unknown bucket type: %s", bucketType)
+	}
+}
 
 func GetBucket() Bucket {
-	once.Do(func() {
-		if bucketInstance == nil {
-			bucketType := ResolveBucketType()
-			switch bucketType {
-			case S3BucketType:
-				bucketName := config.GetEnv("S3_BUCKET_NAME")
-				bucketInstance = &S3Bucket{
-					BucketName: bucketName,
-				}
-			case LocalBucketType:
-				basePath := config.GetEnv("LOCAL_BUCKET_BASE_PATH")
-				bucketInstance = &LocalBucket{
-					BasePath: basePath,
-				}
-			default:
-				panic(fmt.Sprintf("Unknown bucket type: %s", bucketType))
-			}
-		}
-	})
-	return bucketInstance
+	return bucket
 }
 
 func ConvertReadCloserToBytes(rc io.ReadCloser) ([]byte, error) {
@@ -80,8 +68,7 @@ func ConvertReadCloserToBytes(rc io.ReadCloser) ([]byte, error) {
 }
 
 func ResetBucketInstance() {
-	bucketInstance = nil
-	once = sync.Once{}
+	bucket = nil
 }
 
 type FileUploadRequest struct {

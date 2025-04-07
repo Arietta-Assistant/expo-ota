@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"expo-open-ota/internal/auth"
 	"expo-open-ota/internal/crypto"
 	"expo-open-ota/internal/keyStore"
 	"expo-open-ota/internal/metrics"
@@ -10,11 +11,13 @@ import (
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
 	"fmt"
-	"github.com/google/uuid"
 	"log"
 	"mime/multipart"
 	"net/http"
 	"strconv"
+	"strings"
+
+	"github.com/google/uuid"
 )
 
 func createMultipartResponse(headers map[string][]string, jsonContent interface{}) (*multipart.Writer, *bytes.Buffer, error) {
@@ -97,18 +100,54 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 		http.Error(w, "Error getting metadata", http.StatusInternalServerError)
 		return
 	}
+
+	// Check if the current build number is higher than the installed one
+	currentBuild := r.Header.Get("expo-build-number")
+	if currentBuild != "" {
+		updateBuild := metadata.MetadataJSON.Extra["buildNumber"].(string)
+		if compareBuildNumbers(currentBuild, updateBuild) >= 0 {
+			putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
+			return
+		}
+	}
+
 	if currentUpdateId != "" && currentUpdateId == crypto.ConvertSHA256HashToUUID(metadata.ID) && protocolVersion == 1 {
 		putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
 		return
 	}
+
 	manifest, err := update.ComposeUpdateManifest(&metadata, lastUpdate, platform)
 	if err != nil {
 		log.Printf("[RequestID: %s] Error composing manifest: %v", requestID, err)
 		http.Error(w, "Error composing manifest", http.StatusInternalServerError)
 		return
 	}
+
 	metrics.TrackUpdateDownload(platform, lastUpdate.RuntimeVersion, lastUpdate.Branch, metadata.ID, "update")
 	putResponse(w, r, manifest, "manifest", lastUpdate.RuntimeVersion, protocolVersion, requestID)
+}
+
+func compareBuildNumbers(current, update string) int {
+	// Remove "build-" prefix if present
+	current = strings.TrimPrefix(current, "build-")
+	update = strings.TrimPrefix(update, "build-")
+
+	// Convert to integers
+	currentNum, err1 := strconv.Atoi(current)
+	updateNum, err2 := strconv.Atoi(update)
+
+	// If either conversion fails, do string comparison
+	if err1 != nil || err2 != nil {
+		return strings.Compare(current, update)
+	}
+
+	// Compare numbers
+	if currentNum < updateNum {
+		return -1
+	} else if currentNum > updateNum {
+		return 1
+	}
+	return 0
 }
 
 func putRollbackInResponse(w http.ResponseWriter, r *http.Request, lastUpdate types.Update, platform string, protocolVersion int64, requestID string) {
@@ -148,23 +187,48 @@ func putNoUpdateAvailableInResponse(w http.ResponseWriter, r *http.Request, runt
 func ManifestHandler(w http.ResponseWriter, r *http.Request) {
 	requestID := uuid.New().String()
 
+	// Verify Firebase token
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		log.Printf("[RequestID: %s] No authorization header provided", requestID)
+		http.Error(w, "No authorization header provided", http.StatusUnauthorized)
+		return
+	}
+
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	decodedToken, err := auth.VerifyFirebaseToken(token)
+	if err != nil {
+		log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
+		http.Error(w, "Invalid Firebase token", http.StatusUnauthorized)
+		return
+	}
+
+	// Log user access
+	log.Printf("[RequestID: %s] User %s (%s) checking for updates",
+		requestID,
+		decodedToken.UID,
+		decodedToken.Claims["email"])
+
 	channelName := r.Header.Get("expo-channel-name")
 	if channelName == "" {
 		log.Printf("[RequestID: %s] No channel name provided", requestID)
 		http.Error(w, "No channel name provided", http.StatusBadRequest)
 		return
 	}
+
 	branchMap, err := services.FetchExpoChannelMapping(channelName)
 	if err != nil {
 		log.Printf("[RequestID: %s] Error fetching channel mapping: %v", requestID, err)
 		http.Error(w, "Error fetching channel mapping", http.StatusInternalServerError)
 		return
 	}
+
 	if branchMap == nil {
 		log.Printf("[RequestID: %s] No branch mapping found for channel: %s", requestID, channelName)
 		http.Error(w, "No branch mapping found", http.StatusNotFound)
 		return
 	}
+
 	branch := branchMap.BranchName
 	protocolVersion, err := strconv.ParseInt(r.Header.Get("expo-protocol-version"), 10, 64)
 	if err != nil {
@@ -172,6 +236,7 @@ func ManifestHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid protocol version", http.StatusBadRequest)
 		return
 	}
+
 	platform := r.Header.Get("expo-platform")
 	if platform == "" {
 		platform = r.URL.Query().Get("platform")
@@ -181,24 +246,29 @@ func ManifestHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid platform", http.StatusBadRequest)
 		return
 	}
+
 	runtimeVersion := r.Header.Get("expo-runtime-version")
 	if runtimeVersion == "" {
 		runtimeVersion = r.URL.Query().Get("runtimeVersion")
 	}
+
 	clientId := r.Header.Get("EAS-Client-ID")
 	currentUpdateId := r.Header.Get("expo-current-update-id")
 	metrics.TrackActiveUser(clientId, platform, runtimeVersion, branch, currentUpdateId)
+
 	if runtimeVersion == "" {
 		log.Printf("[RequestID: %s] No runtime version provided", requestID)
 		http.Error(w, "No runtime version provided", http.StatusBadRequest)
 		return
 	}
+
 	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion)
 	if err != nil {
 		log.Printf("[RequestID: %s] Error getting latest update: %v", requestID, err)
 		http.Error(w, "Error getting latest update", http.StatusInternalServerError)
 		return
 	}
+
 	if lastUpdate == nil {
 		log.Printf("[RequestID: %s] No update found for runtimeVersion: %s in branch: %s", requestID, runtimeVersion, branch)
 		putNoUpdateAvailableInResponse(w, r, runtimeVersion, protocolVersion, requestID)

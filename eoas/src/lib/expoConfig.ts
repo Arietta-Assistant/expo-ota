@@ -1,6 +1,5 @@
 // This file is copied from eas-cli[https://github.com/expo/eas-cli] to ensure consistent user experience across the CLI.
 import { ExpoConfig, getConfig, getConfigFilePaths } from '@expo/config';
-import { Env } from '@expo/eas-build-job';
 import spawnAsync from '@expo/spawn-async';
 import fs from 'fs-extra';
 import Joi from 'joi';
@@ -26,7 +25,6 @@ export type PublicExpoConfig = Omit<
 };
 
 export interface ExpoConfigOptions {
-  env?: Env;
   skipSDKVersionRequirement?: boolean;
   skipPlugins?: boolean;
 }
@@ -45,7 +43,6 @@ async function getExpoConfigInternalAsync(
   try {
     process.env = {
       ...process.env,
-      ...opts.env,
     };
 
     let exp: ExpoConfig;
@@ -54,12 +51,10 @@ async function getExpoConfigInternalAsync(
         const { stdout } = await spawnAsync(
           'npx',
           ['expo', 'config', '--json', ...(opts.isPublicConfig ? ['--type', 'public'] : [])],
-
           {
             cwd: projectDir,
             env: {
               ...process.env,
-              ...opts.env,
               EXPO_NO_DOTENV: '1',
             },
           }
@@ -70,7 +65,7 @@ async function getExpoConfigInternalAsync(
           Log.warn(
             `Failed to read the app config from the project using "npx expo config" command: ${err.message}.`
           );
-          Log.warn('Falling back to the version of "@expo/config" shipped with the EAS CLI.');
+          Log.warn('Falling back to the version of "@expo/config" shipped with the CLI.');
           wasExpoConfigWarnPrinted = true;
         }
         exp = getConfig(projectDir, {
@@ -120,146 +115,23 @@ export async function getPrivateExpoConfigAsync(
   return await getExpoConfigInternalAsync(projectDir, { ...opts, isPublicConfig: false });
 }
 
-export function ensureExpoConfigExists(projectDir: string): void {
-  const paths = getConfigFilePaths(projectDir);
-  if (!paths?.staticConfigPath && !paths?.dynamicConfigPath) {
-    // eslint-disable-next-line node/no-sync
-    fs.writeFileSync(path.join(projectDir, 'app.json'), JSON.stringify({ expo: {} }, null, 2));
-  }
-}
-
-export function isUsingStaticExpoConfig(projectDir: string): boolean {
-  const paths = getConfigFilePaths(projectDir);
-  return !!(paths.staticConfigPath?.endsWith('app.json') && !paths.dynamicConfigPath);
-}
-
 export async function getPublicExpoConfigAsync(
   projectDir: string,
   opts: ExpoConfigOptions = {}
 ): Promise<PublicExpoConfig> {
   ensureExpoConfigExists(projectDir);
-
   return await getExpoConfigInternalAsync(projectDir, { ...opts, isPublicConfig: true });
 }
 
-export function getExpoConfigUpdateUrl(config: ExpoConfig): string | undefined {
-  return config.updates?.url;
+export function getExpoConfigUpdateUrl(config: ExpoConfig): string | null {
+  return config.updates?.url ?? null;
 }
 
-export async function createOrModifyExpoConfigAsync(
-  projectDir: string,
-  exp: Partial<ExpoConfig>
-): Promise<void> {
-  try {
-    ensureExpoConfigExists(projectDir);
-    const configPathJS = path.join(projectDir, 'app.config.js');
-    const configPathTS = path.join(projectDir, 'app.config.ts');
-
-    // eslint-disable-next-line node/no-sync
-    const hasJsConfig = fs.existsSync(configPathJS);
-
-    if (isUsingStaticExpoConfig(projectDir)) {
-      Log.withInfo(
-        'You are using a static app config. We will create a dynamic config file for you.'
-      );
-
-      const newConfigContent = `export default ({ config }) => ({
-                                ...config,
-                                ...${stringifyWithEnv(exp)}
-                              });`;
-      // eslint-disable-next-line node/no-sync
-      fs.writeFileSync(configPathJS, newConfigContent);
-    } else if (hasJsConfig) {
-      // eslint-disable-next-line node/no-sync
-      const existingCode = fs.readFileSync(configPathJS, 'utf8');
-      const j = jscodeshift;
-      const ast: Collection = j(existingCode);
-
-      ast.find(j.ArrowFunctionExpression).forEach(path => {
-        if (
-          path.value.body &&
-          j.BlockStatement.check(path.value.body) &&
-          path.value.body.body.length > 0
-        ) {
-          const returnStatement = path.value.body.body.find(node => j.ReturnStatement.check(node));
-          if (
-            returnStatement &&
-            j.ReturnStatement.check(returnStatement) &&
-            returnStatement.argument
-          ) {
-            const configObject = returnStatement.argument;
-            if (j.ObjectExpression.check(configObject)) {
-              updateObjectExpression(j, configObject, exp);
-            }
-          }
-        }
-      });
-      const updatedCode = ast.toSource({
-        quote: 'auto',
-        trailingComma: true,
-        reuseWhitespace: true,
-      });
-
-      // eslint-disable-next-line node/no-sync
-      fs.writeFileSync(configPathJS, updatedCode);
-    } else if (configPathTS) {
-      Log.warn('TypeScript support is not yet implemented.');
-      throw new Error('TypeScript support is not yet implemented.');
-    }
-  } catch (e) {
-    Log.withInfo('An error occurred while updating the Expo config. Please update it manually.');
-    Log.newLine();
-    Log.warn('Please modify your app.config.ts file manually by adding the following code:');
-    Log.newLine();
-    Log.withInfo(`${stringifyWithEnv(exp)}`);
-    Log.newLine();
-    throw e;
-  }
-}
-
-function updateObjectExpression(
-  j: typeof jscodeshift,
-  configObject: ReturnType<typeof j.objectExpression>,
-  updates: Record<string, any>
-): void {
-  Object.entries(updates).forEach(([key, value]) => {
-    const existingProperty = configObject.properties.find(prop => {
-      return (
-        prop.type === 'Property' &&
-        ((prop.key.type === 'Identifier' && prop.key.name === key) ||
-          (prop.key.type === 'StringLiteral' && prop.key.value === key))
-      );
-    });
-
-    if (existingProperty) {
-      configObject.properties = configObject.properties.filter(prop => prop !== existingProperty);
-    }
-
-    const newProperty = j.objectProperty(j.identifier(key), createValueNode(j, value));
-
-    configObject.properties.push(newProperty);
-  });
-}
-
-function createValueNode(j: typeof jscodeshift, value: any): any {
-  if (typeof value === 'string' && value.startsWith('process.env.')) {
-    return j.memberExpression(
-      j.memberExpression(j.identifier('process'), j.identifier('env')),
-      j.identifier(value.split('.')[2])
+export function ensureExpoConfigExists(projectDir: string): void {
+  const paths = getConfigFilePaths(projectDir);
+  if (!paths.dynamicConfigPath && !paths.staticConfigPath) {
+    throw new Error(
+      'No Expo config found. Please create an app.json or app.config.js in your project directory.'
     );
   }
-
-  if (typeof value === 'object' && value !== null) {
-    return j.objectExpression(
-      Object.entries(value).map(
-        ([key, val]) => j.objectProperty(j.stringLiteral(key), createValueNode(j, val)) // Force stringLiteral pour garder les guillemets
-      )
-    );
-  }
-
-  return j.literal(value);
-}
-
-function stringifyWithEnv(obj: Record<string, any>): string {
-  return JSON.stringify(obj, null, 2).replace(/"process\.env\.(\w+)"/g, 'process.env.$1');
 }

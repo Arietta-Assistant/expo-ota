@@ -22,9 +22,10 @@ type FileMetadata struct {
 }
 
 type MetadataObject struct {
-	Version      int          `json:"version"`
-	Bundler      string       `json:"bundler"`
-	FileMetadata FileMetadata `json:"fileMetadata"`
+	Version      int                    `json:"version"`
+	Bundler      string                 `json:"bundler"`
+	FileMetadata FileMetadata           `json:"fileMetadata"`
+	Extra        map[string]interface{} `json:"extra"`
 }
 
 type UpdateMetadata struct {
@@ -91,4 +92,9 @@ type BucketFile struct {
 type ExpoAuth struct {
 	Token         *string
 	SessionSecret *string
+}
+
+type FileUpdateRequest struct {
+	Url  string `json:"url"`
+	Path string `json:"path"`
 }

@@ -1,13 +1,42 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"expo-open-ota/config"
+	"expo-open-ota/internal/db"
 	"expo-open-ota/internal/services"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
+	"log"
 	"time"
+
+	firebase "firebase.google.com/go"
+	"firebase.google.com/go/auth"
+	"github.com/golang-jwt/jwt/v5"
+	"google.golang.org/api/option"
 )
+
+var (
+	firebaseApp *firebase.App
+	authClient  *auth.Client
+)
+
+func init() {
+	// Initialize Firebase Admin SDK
+	opt := option.WithCredentialsFile(config.GetEnv("FIREBASE_SERVICE_ACCOUNT_PATH"))
+	app, err := firebase.NewApp(context.Background(), nil, opt)
+	if err != nil {
+		log.Fatalf("Error initializing Firebase app: %v", err)
+	}
+
+	client, err := app.Auth(context.Background())
+	if err != nil {
+		log.Fatalf("Error getting Auth client: %v", err)
+	}
+
+	firebaseApp = app
+	authClient = client
+}
 
 type Auth struct {
 	Secret string
@@ -119,4 +148,48 @@ func (a *Auth) RefreshToken(tokenString string) (*AuthResponse, error) {
 		Token:        *newToken,
 		RefreshToken: *refreshToken,
 	}, nil
+}
+
+// VerifyFirebaseToken verifies a Firebase authentication token and returns user info
+func VerifyFirebaseToken(token string) (*auth.Token, error) {
+	if token == "" {
+		return nil, nil
+	}
+
+	// Verify the ID token
+	decodedToken, err := authClient.VerifyIDToken(context.Background(), token)
+	if err != nil {
+		log.Printf("Error verifying Firebase token: %v", err)
+		return nil, err
+	}
+
+	// Track user access in database
+	go trackUserAccess(decodedToken)
+
+	return decodedToken, nil
+}
+
+// trackUserAccess records user access in the database
+func trackUserAccess(token *auth.Token) {
+	// Get user info from token
+	userID := token.UID
+	email := token.Claims["email"].(string)
+	name := token.Claims["name"].(string)
+	if name == "" {
+		name = email
+	}
+
+	// Create or update user record
+	user := db.User{
+		ID:          userID,
+		Email:       email,
+		Name:        name,
+		LastSeen:    time.Now(),
+		UpdateCount: 1, // Increment update count
+	}
+
+	err := db.UpsertUser(user)
+	if err != nil {
+		log.Printf("Error tracking user access: %v", err)
+	}
 }
