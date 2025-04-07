@@ -5,20 +5,41 @@ RUN npm ci
 COPY dashboard ./
 RUN npm run build
 
-FROM golang:1.23-alpine AS builder
+FROM golang:1.21-alpine AS builder
+
+# Install git and build dependencies
+RUN apk add --no-cache git
+
+# Set working directory
 WORKDIR /app
+
+# Copy go mod and sum files
 COPY go.mod go.sum ./
+
+# Download dependencies
 RUN go mod download
-COPY cmd ./cmd
-COPY internal ./internal
-COPY keys ./keys
-COPY config ./config
-COPY updates ./updates
-RUN GOOS=linux GOARCH=amd64 go build -o main ./cmd/api
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o main ./cmd/api
 
 FROM alpine:latest
-RUN apk add --no-cache bash
-COPY --from=builder /app/main /app/main
-COPY --from=dashboard-builder /app/dashboard/dist /app/dashboard/dist
-EXPOSE 3000
-CMD ["/app/main"]
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/main .
+COPY --from=builder /app/config ./config
+COPY --from=builder /app/updates ./updates
+
+# Expose port
+EXPOSE 8080
+
+# Run the application
+CMD ["./main"]

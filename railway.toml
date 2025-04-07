@@ -1,9 +1,10 @@
 [build]
-builder = "nixpacks"
-buildCommand = "apk add --no-cache git && go mod download && GOOS=linux GOARCH=amd64 go build -o main ./cmd/api"
+builder = "DOCKERFILE"
+dockerfilePath = "./Dockerfile"
 
 [deploy]
 startCommand = "./main"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
-restartPolicyType = "on_failure" 
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10 
