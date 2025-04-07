@@ -34,25 +34,33 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - containerPort: 3000
+            - name: http
+              containerPort: 3000
+              protocol: TCP
           livenessProbe:
             httpGet:
-              path: /hc
-              port: 3000
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /hc
-              port: 3000
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           env:
+            - name: GIN_MODE
+              value: "release"
             {{- if eq (index .Values.podAnnotations "prometheus.io/scrape") "true" }}
             - name: PROMETHEUS_ENABLED
               value: "true"
-              {{- else }}
+            {{- else }}
             - name: PROMETHEUS_ENABLED
               value: "false"
-              {{- end }}
+            {{- end }}
             {{- range $env := .Values.environment }}
               {{- $isRequired := true }}
               {{- if eq (typeOf $env.required) "bool" }}

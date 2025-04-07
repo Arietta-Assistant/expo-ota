@@ -41,11 +41,13 @@ var bucket Bucket
 func init() {
 	bucketType := config.GetEnv("BUCKET_TYPE")
 	if bucketType == "" {
-		bucketType = string(FirebaseBucketType)
+		bucketType = string(LocalBucketType)
 	}
 
 	var err error
 	switch BucketType(bucketType) {
+	case LocalBucketType:
+		bucket = NewLocalBucket()
 	case FirebaseBucketType:
 		bucket, err = NewFirebaseBucket()
 		if err != nil {

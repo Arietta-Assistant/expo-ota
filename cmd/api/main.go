@@ -3,15 +3,18 @@ package main
 import (
 	"expo-open-ota/config"
 	"expo-open-ota/internal/metrics"
-	"expo-open-ota/internal/router"
-	"github.com/gorilla/handlers"
+	infrastructure "expo-open-ota/internal/router"
 	"log"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/handlers"
 )
 
 func init() {
 	config.LoadConfig()
 	metrics.InitMetrics()
+	gin.SetMode(gin.ReleaseMode)
 }
 
 func main() {

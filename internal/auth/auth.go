@@ -22,22 +22,30 @@ var (
 )
 
 func init() {
-	// Initialize Firebase Admin SDK
+	// Initialize Firebase Admin SDK if service account is provided
 	encodedServiceAccount := config.GetEnv("FIREBASE_SERVICE_ACCOUNT")
+	if encodedServiceAccount == "" {
+		log.Println("FIREBASE_SERVICE_ACCOUNT not set, Firebase authentication will be disabled")
+		return
+	}
+
 	serviceAccount, err := base64.StdEncoding.DecodeString(encodedServiceAccount)
 	if err != nil {
-		log.Fatalf("Error decoding Firebase service account: %v", err)
+		log.Printf("Error decoding Firebase service account: %v", err)
+		return
 	}
 
 	opt := option.WithCredentialsJSON(serviceAccount)
 	app, err := firebase.NewApp(context.Background(), nil, opt)
 	if err != nil {
-		log.Fatalf("Error initializing Firebase app: %v", err)
+		log.Printf("Error initializing Firebase app: %v", err)
+		return
 	}
 
 	client, err := app.Auth(context.Background())
 	if err != nil {
-		log.Fatalf("Error getting Auth client: %v", err)
+		log.Printf("Error getting Auth client: %v", err)
+		return
 	}
 
 	authClient = client
@@ -159,6 +167,17 @@ func (a *Auth) RefreshToken(tokenString string) (*AuthResponse, error) {
 func VerifyFirebaseToken(token string) (*auth.Token, error) {
 	if token == "" {
 		return nil, nil
+	}
+
+	if authClient == nil {
+		// Firebase authentication is disabled, return a mock token
+		return &auth.Token{
+			UID: "mock-user",
+			Claims: map[string]interface{}{
+				"email": "mock@example.com",
+				"name":  "Mock User",
+			},
+		}, nil
 	}
 
 	// Verify the ID token

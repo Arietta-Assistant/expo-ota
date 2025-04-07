@@ -23,6 +23,14 @@ type LocalBucket struct {
 	BasePath string
 }
 
+func NewLocalBucket() *LocalBucket {
+	basePath := config.GetEnv("LOCAL_BUCKET_BASE_PATH")
+	if basePath == "" {
+		basePath = "./updates"
+	}
+	return &LocalBucket{BasePath: basePath}
+}
+
 func (b *LocalBucket) DeleteUpdateFolder(branch string, runtimeVersion string, updateId string) error {
 	if b.BasePath == "" {
 		return errors.New("BasePath not set")
