@@ -1,11 +1,8 @@
 package handlers
 
 import (
-	"bytes"
-	"encoding/json"
 	"expo-open-ota/internal/auth"
 	"expo-open-ota/internal/bucket"
-	cache2 "expo-open-ota/internal/cache"
 	"expo-open-ota/internal/config"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
@@ -17,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/gorilla/mux"
 )
 
 type FileNamesRequest struct {
@@ -186,14 +182,14 @@ func RequestUploadLocalFileHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotAcceptable)
 }
 
-func RequestUploadUrlHandler(w http.ResponseWriter, r *http.Request) {
+func RequestUploadUrlHandler(c *gin.Context) {
 	requestID := uuid.New().String()
 
 	// Verify Firebase token
-	authHeader := r.Header.Get("Authorization")
+	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
 		log.Printf("[RequestID: %s] No authorization header provided", requestID)
-		http.Error(w, "No authorization header provided", http.StatusUnauthorized)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No authorization header provided"})
 		return
 	}
 
@@ -201,93 +197,92 @@ func RequestUploadUrlHandler(w http.ResponseWriter, r *http.Request) {
 	tokenInfo, err := auth.VerifyFirebaseToken(token)
 	if err != nil || tokenInfo == nil {
 		log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
-		http.Error(w, "Invalid Firebase token", http.StatusUnauthorized)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Firebase token"})
 		return
 	}
 
-	vars := mux.Vars(r)
-	branchName := vars["BRANCH"]
+	branchName := c.Param("branch")
 	if branchName == "" {
 		log.Printf("[RequestID: %s] No branch name provided", requestID)
-		http.Error(w, "No branch name provided", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No branch name provided"})
 		return
 	}
 
-	platform := r.URL.Query().Get("platform")
+	platform := c.Query("platform")
 	if platform == "" || (platform != "ios" && platform != "android") {
 		log.Printf("[RequestID: %s] Invalid platform: %s", requestID, platform)
-		http.Error(w, "Invalid platform", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform"})
 		return
 	}
 
-	commitHash := r.URL.Query().Get("commitHash")
-	runtimeVersion := r.URL.Query().Get("runtimeVersion")
+	commitHash := c.Query("commitHash")
+	runtimeVersion := c.Query("runtimeVersion")
 	if runtimeVersion == "" {
 		log.Printf("[RequestID: %s] No runtime version provided", requestID)
-		http.Error(w, "No runtime version provided", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No runtime version provided"})
 		return
 	}
 
-	buildNumber := r.URL.Query().Get("buildNumber")
+	buildNumber := c.Query("buildNumber")
 	if buildNumber == "" {
 		log.Printf("[RequestID: %s] No build number provided", requestID)
-		http.Error(w, "No build number provided", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No build number provided"})
 		return
 	}
 
 	var request FileNamesRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("[RequestID: %s] Error decoding JSON body: %v", requestID, err)
-		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON body"})
 		return
 	}
 
 	if len(request.FileNames) == 0 {
 		log.Printf("[RequestID: %s] No file names provided", requestID)
-		http.Error(w, "No file names provided", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file names provided"})
 		return
 	}
 
-	updateId := time.Now().UnixNano() / int64(time.Millisecond)
-	updateRequests, err := bucket.RequestUploadUrlsForFileUpdates(branchName, runtimeVersion, fmt.Sprintf("%d", updateId), request.FileNames)
-	if err != nil {
-		log.Printf("[RequestID: %s] Error requesting upload urls: %v", requestID, err)
-		http.Error(w, "Error requesting upload urls", http.StatusInternalServerError)
+	// Get the bucket
+	bucketType := config.GetEnv("BUCKET_TYPE")
+	if bucketType != string(bucket.FirebaseBucketType) {
+		log.Printf("[RequestID: %s] Invalid bucket type: %s", requestID, bucketType)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid bucket type"})
 		return
 	}
 
-	fileUpdateMetadata := map[string]interface{}{
-		"platform":       platform,
-		"commitHash":     commitHash,
-		"buildNumber":    buildNumber,
-		"runtimeVersion": runtimeVersion,
-	}
+	// Generate update ID
+	updateId := uuid.New().String()
 
-	marshalledMetadata, err := json.Marshal(fileUpdateMetadata)
-	if err != nil {
-		log.Printf("[RequestID: %s] Error marshalling file update metadata: %v", requestID, err)
-		http.Error(w, "Error marshalling file update metadata", http.StatusInternalServerError)
-		return
-	}
-
-	metadataReader := bytes.NewReader(marshalledMetadata)
+	// Request upload URLs
 	resolvedBucket := bucket.GetBucket()
-	err = resolvedBucket.UploadFileIntoUpdate(types.Update{
+	requests, err := resolvedBucket.RequestUploadUrlsForFileUpdates(branchName, runtimeVersion, updateId, request.FileNames)
+	if err != nil {
+		log.Printf("[RequestID: %s] Error requesting upload URLs: %v", requestID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error requesting upload URLs"})
+		return
+	}
+
+	// Create update record
+	newUpdate := types.Update{
 		Branch:         branchName,
 		RuntimeVersion: runtimeVersion,
-		UpdateId:       fmt.Sprintf("%d", updateId),
-		CreatedAt:      time.Duration(updateId) * time.Millisecond,
-	}, "update-metadata.json", metadataReader)
-
-	cache := cache2.GetCache()
-	cacheKey := update.ComputeLastUpdateCacheKey(branchName, runtimeVersion)
-	cache.Delete(cacheKey)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("expo-update-id", fmt.Sprintf("%d", updateId))
-	if err := json.NewEncoder(w).Encode(updateRequests); err != nil {
-		log.Printf("[RequestID: %s] Error encoding response: %v", requestID, err)
-		http.Error(w, "Error encoding response", http.StatusInternalServerError)
+		UpdateId:       updateId,
+		CommitHash:     commitHash,
+		BuildNumber:    buildNumber,
+		Platform:       platform,
+		CreatedAt:      time.Duration(time.Now().UnixNano()),
 	}
-	w.WriteHeader(http.StatusOK)
+
+	err = update.CreateUpdate(newUpdate)
+	if err != nil {
+		log.Printf("[RequestID: %s] Error creating update record: %v", requestID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating update record"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"updateId": updateId,
+		"requests": requests,
+	})
 }

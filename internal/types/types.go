@@ -82,6 +82,9 @@ type Update struct {
 	RuntimeVersion string        `json:"runtimeVersion"`
 	UpdateId       string        `json:"updateId"`
 	CreatedAt      time.Duration `json:"createdAt"`
+	CommitHash     string        `json:"commitHash,omitempty"`
+	BuildNumber    string        `json:"buildNumber,omitempty"`
+	Platform       string        `json:"platform,omitempty"`
 }
 
 type BucketFile struct {

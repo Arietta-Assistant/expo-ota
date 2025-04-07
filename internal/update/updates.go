@@ -467,3 +467,34 @@ func RetrieveUpdateCommitHashAndPlatform(update types.Update) (string, string, e
 
 	return commitHash, platform, nil
 }
+
+func CreateUpdate(update types.Update) error {
+	resolvedBucket := bucket.GetBucket()
+	metadata := types.MetadataObject{
+		Version: 0,
+		Bundler: "metro",
+		FileMetadata: types.FileMetadata{
+			Android: types.PlatformMetadata{
+				Bundle: "",
+				Assets: []types.Asset{},
+			},
+			IOS: types.PlatformMetadata{
+				Bundle: "",
+				Assets: []types.Asset{},
+			},
+		},
+		Extra: map[string]interface{}{
+			"commitHash":  update.CommitHash,
+			"buildNumber": update.BuildNumber,
+			"platform":    update.Platform,
+		},
+	}
+
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("error marshalling metadata: %w", err)
+	}
+
+	reader := strings.NewReader(string(metadataBytes))
+	return resolvedBucket.UploadFileIntoUpdate(update, "metadata.json", reader)
+}
