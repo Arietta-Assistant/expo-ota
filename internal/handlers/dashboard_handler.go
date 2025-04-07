@@ -9,11 +9,13 @@ import (
 	"expo-open-ota/internal/dashboard"
 	"expo-open-ota/internal/services"
 	update2 "expo-open-ota/internal/update"
-	"github.com/gorilla/mux"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/mux"
 )
 
 type BranchMapping struct {
@@ -29,30 +31,54 @@ type UpdateItem struct {
 	Platform   string `json:"platform"`
 }
 
-type SettingsEnv struct {
-	BASE_URL                               string `json:"BASE_URL"`
-	EXPO_APP_ID                            string `json:"EXPO_APP_ID"`
-	EXPO_ACCESS_TOKEN                      string `json:"EXPO_ACCESS_TOKEN"`
-	CACHE_MODE                             string `json:"CACHE_MODE"`
-	REDIS_HOST                             string `json:"REDIS_HOST"`
-	REDIS_PORT                             string `json:"REDIS_PORT"`
-	STORAGE_MODE                           string `json:"STORAGE_MODE"`
-	S3_BUCKET_NAME                         string `json:"S3_BUCKET_NAME"`
-	LOCAL_BUCKET_BASE_PATH                 string `json:"LOCAL_BUCKET_BASE_PATH"`
-	KEYS_STORAGE_TYPE                      string `json:"KEYS_STORAGE_TYPE"`
-	AWSSM_EXPO_PUBLIC_KEY_SECRET_ID        string `json:"AWSSM_EXPO_PUBLIC_KEY_SECRET_ID"`
-	AWSSM_EXPO_PRIVATE_KEY_SECRET_ID       string `json:"AWSSM_EXPO_PRIVATE_KEY_SECRET_ID"`
-	PUBLIC_EXPO_KEY_B64                    string `json:"PUBLIC_EXPO_KEY_B64"`
-	PUBLIC_LOCAL_EXPO_KEY_PATH             string `json:"PUBLIC_LOCAL_EXPO_KEY_PATH"`
-	PRIVATE_LOCAL_EXPO_KEY_PATH            string `json:"PRIVATE_LOCAL_EXPO_KEY_PATH"`
-	AWS_REGION                             string `json:"AWS_REGION"`
-	AWS_ACCESS_KEY_ID                      string `json:"AWS_ACCESS_KEY_ID"`
-	CLOUDFRONT_DOMAIN                      string `json:"CLOUDFRONT_DOMAIN"`
-	CLOUDFRONT_KEY_PAIR_ID                 string `json:"CLOUDFRONT_KEY_PAIR_ID"`
-	CLOUDFRONT_PRIVATE_KEY_B64             string `json:"CLOUDFRONT_PRIVATE_KEY_B64"`
-	AWSSM_CLOUDFRONT_PRIVATE_KEY_SECRET_ID string `json:"AWSSM_CLOUDFRONT_PRIVATE_KEY_SECRET_ID"`
-	PRIVATE_LOCAL_CLOUDFRONT_KEY_PATH      string `json:"PRIVATE_LOCAL_CLOUDFRONT_KEY_PATH"`
-	PROMETHEUS_ENABLED                     string `json:"PROMETHEUS_ENABLED"`
+type DashboardConfig struct {
+	BASE_URL                      string `json:"BASE_URL"`
+	EXPO_APP_ID                   string `json:"EXPO_APP_ID"`
+	EXPO_ACCESS_TOKEN             string `json:"EXPO_ACCESS_TOKEN"`
+	CACHE_MODE                    string `json:"CACHE_MODE"`
+	REDIS_HOST                    string `json:"REDIS_HOST"`
+	REDIS_PORT                    string `json:"REDIS_PORT"`
+	STORAGE_MODE                  string `json:"STORAGE_MODE"`
+	S3_BUCKET_NAME                string `json:"S3_BUCKET_NAME"`
+	LOCAL_BUCKET_BASE_PATH        string `json:"LOCAL_BUCKET_BASE_PATH"`
+	KEYS_STORAGE_TYPE             string `json:"KEYS_STORAGE_TYPE"`
+	KEYS_STORAGE_BASE_PATH        string `json:"KEYS_STORAGE_BASE_PATH"`
+	KEYS_STORAGE_BUCKET_NAME      string `json:"KEYS_STORAGE_BUCKET_NAME"`
+	KEYS_STORAGE_ACCESS_KEY       string `json:"KEYS_STORAGE_ACCESS_KEY"`
+	KEYS_STORAGE_SECRET_KEY       string `json:"KEYS_STORAGE_SECRET_KEY"`
+	KEYS_STORAGE_ENDPOINT         string `json:"KEYS_STORAGE_ENDPOINT"`
+	KEYS_STORAGE_REGION           string `json:"KEYS_STORAGE_REGION"`
+	KEYS_STORAGE_FORCE_PATH_STYLE bool   `json:"KEYS_STORAGE_FORCE_PATH_STYLE"`
+}
+
+func GetDashboardConfig(c *gin.Context) {
+	expoToken := config.GetEnv("EXPO_ACCESS_TOKEN")
+	tokenDisplay := ""
+	if expoToken != "" {
+		tokenDisplay = "***" + expoToken[:5]
+	}
+
+	config := DashboardConfig{
+		BASE_URL:                      config.GetEnv("BASE_URL"),
+		EXPO_APP_ID:                   config.GetEnv("EXPO_APP_ID"),
+		EXPO_ACCESS_TOKEN:             tokenDisplay,
+		CACHE_MODE:                    config.GetEnv("CACHE_MODE"),
+		REDIS_HOST:                    config.GetEnv("REDIS_HOST"),
+		REDIS_PORT:                    config.GetEnv("REDIS_PORT"),
+		STORAGE_MODE:                  config.GetEnv("STORAGE_MODE"),
+		S3_BUCKET_NAME:                config.GetEnv("S3_BUCKET_NAME"),
+		LOCAL_BUCKET_BASE_PATH:        config.GetEnv("LOCAL_BUCKET_BASE_PATH"),
+		KEYS_STORAGE_TYPE:             config.GetEnv("KEYS_STORAGE_TYPE"),
+		KEYS_STORAGE_BASE_PATH:        config.GetEnv("KEYS_STORAGE_BASE_PATH"),
+		KEYS_STORAGE_BUCKET_NAME:      config.GetEnv("KEYS_STORAGE_BUCKET_NAME"),
+		KEYS_STORAGE_ACCESS_KEY:       config.GetEnv("KEYS_STORAGE_ACCESS_KEY"),
+		KEYS_STORAGE_SECRET_KEY:       config.GetEnv("KEYS_STORAGE_SECRET_KEY"),
+		KEYS_STORAGE_ENDPOINT:         config.GetEnv("KEYS_STORAGE_ENDPOINT"),
+		KEYS_STORAGE_REGION:           config.GetEnv("KEYS_STORAGE_REGION"),
+		KEYS_STORAGE_FORCE_PATH_STYLE: config.GetEnv("KEYS_STORAGE_FORCE_PATH_STYLE") == "true",
+	}
+
+	c.JSON(200, config)
 }
 
 func GetSettingsHandler(w http.ResponseWriter, r *http.Request) {

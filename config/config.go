@@ -3,9 +3,10 @@ package config
 import (
 	"expo-open-ota/internal/helpers"
 	"flag"
-	"github.com/joho/godotenv"
 	"log"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
 func validateStorageMode(storageMode string) bool {
@@ -61,7 +62,7 @@ func LoadConfig() {
 	}
 	expoToken := GetEnv("EXPO_ACCESS_TOKEN")
 	if expoToken == "" {
-		log.Fatalf("EXPO_ACCESS_TOKEN not set")
+		log.Println("Warning: EXPO_ACCESS_TOKEN not set. Some features may be limited.")
 	}
 	expoAppId := GetEnv("EXPO_APP_ID")
 	if expoAppId == "" {
