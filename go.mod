@@ -9,6 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/cloudfront/sign v1.8.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.73.2
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.34.13
+	firebase.google.com/go v3.13.0+incompatible
+	firebase.google.com/go/storage v1.0.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/handlers v1.5.2
@@ -18,6 +20,9 @@ require (
 	github.com/prometheus/client_golang v1.20.5
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/stretchr/testify v1.10.0
+	google.golang.org/api v0.180.0
+	gorm.io/driver/postgres v1.5.7
+	gorm.io/gorm v1.25.10
 )
 
 require (

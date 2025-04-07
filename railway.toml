@@ -1,9 +1,9 @@
 [build]
 builder = "nixpacks"
-buildCommand = "go build -o server"
+buildCommand = "go mod download && GOOS=linux GOARCH=amd64 go build -o main ./cmd/api"
 
 [deploy]
-startCommand = "./server"
+startCommand = "./main"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "on_failure" 
