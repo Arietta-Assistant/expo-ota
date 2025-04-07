@@ -2,6 +2,7 @@ package bucket
 
 import (
 	"context"
+	"expo-open-ota/config"
 	"expo-open-ota/internal/types"
 	"fmt"
 	"io"
@@ -20,12 +21,24 @@ type FirebaseBucket struct {
 
 func NewFirebaseBucket() (*FirebaseBucket, error) {
 	ctx := context.Background()
-	client, err := storage.NewClient(ctx, option.WithCredentialsFile("path/to/your/firebase-credentials.json"))
+
+	// Get Firebase credentials from environment variables
+	credentials := []byte(config.GetEnv("FIREBASE_CREDENTIALS"))
+	if len(credentials) == 0 {
+		return nil, fmt.Errorf("FIREBASE_CREDENTIALS environment variable is not set")
+	}
+
+	client, err := storage.NewClient(ctx, option.WithCredentialsJSON(credentials))
 	if err != nil {
 		return nil, fmt.Errorf("error creating Firebase Storage client: %w", err)
 	}
 
-	bucket := client.Bucket("your-firebase-storage-bucket-name") // Replace with your bucket name
+	bucketName := config.GetEnv("FIREBASE_STORAGE_BUCKET")
+	if bucketName == "" {
+		return nil, fmt.Errorf("FIREBASE_STORAGE_BUCKET environment variable is not set")
+	}
+
+	bucket := client.Bucket(bucketName)
 
 	return &FirebaseBucket{
 		client: client,
