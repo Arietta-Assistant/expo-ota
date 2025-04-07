@@ -2,18 +2,20 @@ package bucket
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"expo-open-ota/internal/services"
 	"expo-open-ota/internal/types"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"io"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type S3Bucket struct {
@@ -200,14 +202,14 @@ func (b *S3Bucket) GetUpdates(branch string, runtimeVersion string) ([]types.Upd
 	return updates, nil
 }
 
-func (b *S3Bucket) GetFile(update types.Update, assetPath string) (types.BucketFile, error) {
+func (b *S3Bucket) GetFile(branch string, runtimeVersion string, updateId string, fileName string) (io.ReadCloser, error) {
 	if b.BucketName == "" {
-		return types.BucketFile{}, errors.New("BucketName not set")
+		return nil, errors.New("BucketName not set")
 	}
-	filePath := update.Branch + "/" + update.RuntimeVersion + "/" + update.UpdateId + "/" + assetPath
+	filePath := branch + "/" + runtimeVersion + "/" + updateId + "/" + fileName
 	s3Client, errS3 := services.GetS3Client()
 	if errS3 != nil {
-		return types.BucketFile{}, errS3
+		return nil, errS3
 	}
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(b.BucketName),
@@ -215,13 +217,9 @@ func (b *S3Bucket) GetFile(update types.Update, assetPath string) (types.BucketF
 	}
 	resp, err := s3Client.GetObject(context.TODO(), input)
 	if err != nil {
-
-		return types.BucketFile{}, fmt.Errorf("GetObject error: %w", err)
+		return nil, fmt.Errorf("GetObject error: %w", err)
 	}
-	return types.BucketFile{
-		Reader:    resp.Body,
-		CreatedAt: *resp.LastModified,
-	}, nil
+	return resp.Body, nil
 }
 
 func (b *S3Bucket) RequestUploadUrlForFileUpdate(branch string, runtimeVersion string, updateId string, fileName string) (string, error) {
@@ -272,4 +270,66 @@ func (b *S3Bucket) UploadFileIntoUpdate(update types.Update, fileName string, fi
 		return fmt.Errorf("PutObject error: %w", err)
 	}
 	return nil
+}
+
+func (b *S3Bucket) GetUpdate(branch string, runtimeVersion string, updateId string) (*types.Update, error) {
+	if b.BucketName == "" {
+		return nil, errors.New("BucketName not set")
+	}
+
+	metadataPath := branch + "/" + runtimeVersion + "/" + updateId + "/metadata.json"
+	s3Client, errS3 := services.GetS3Client()
+	if errS3 != nil {
+		return nil, errS3
+	}
+
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(b.BucketName),
+		Key:    aws.String(metadataPath),
+	}
+
+	resp, err := s3Client.GetObject(context.TODO(), input)
+	if err != nil {
+		return nil, fmt.Errorf("GetObject error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var metadata types.UpdateMetadata
+	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+		return nil, err
+	}
+
+	createdAt, err := time.ParseDuration(metadata.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CreatedAt: %w", err)
+	}
+
+	return &types.Update{
+		Branch:         branch,
+		RuntimeVersion: runtimeVersion,
+		UpdateId:       updateId,
+		CreatedAt:      createdAt,
+	}, nil
+}
+
+func (b *S3Bucket) RequestUploadUrlsForFileUpdates(branch string, runtimeVersion string, updateId string, fileNames []string) ([]types.FileUpdateRequest, error) {
+	if b.BucketName == "" {
+		return nil, errors.New("BucketName not set")
+	}
+
+	var requests []types.FileUpdateRequest
+	for _, fileName := range fileNames {
+		url, err := b.RequestUploadUrlForFileUpdate(branch, runtimeVersion, updateId, fileName)
+		if err != nil {
+			return nil, fmt.Errorf("error generating upload URL for %s: %w", fileName, err)
+		}
+
+		filePath := fmt.Sprintf("%s/%s/%s/%s", branch, runtimeVersion, updateId, fileName)
+		requests = append(requests, types.FileUpdateRequest{
+			Url:  url,
+			Path: filePath,
+		})
+	}
+
+	return requests, nil
 }

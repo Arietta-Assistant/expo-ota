@@ -2,20 +2,26 @@ package main
 
 import (
 	"expo-open-ota/config"
-	"expo-open-ota/internal/handlers"
+	infrastructure "expo-open-ota/internal/router"
 	"log"
-	"net/http"
 )
 
 func main() {
-	// Register health check endpoint
-	http.HandleFunc("/health", handlers.HealthHandler)
+	// Load configuration
+	config.LoadConfig()
 
-	// ... register other endpoints ...
+	// Initialize router
+	router := infrastructure.NewRouter()
 
+	// Get port from environment or use default
 	port := config.GetEnv("PORT")
-	log.Printf("Server starting on port %s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if port == "" {
+		port = "3000"
+	}
+
+	// Start server
+	log.Printf("Server is running on port %s", port)
+	if err := router.Run(":" + port); err != nil {
 		log.Fatalf("Error starting server: %v", err)
 	}
 }

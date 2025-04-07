@@ -3,11 +3,9 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
-	"expo-open-ota/internal/auth"
 	"expo-open-ota/internal/crypto"
 	"expo-open-ota/internal/keyStore"
 	"expo-open-ota/internal/metrics"
-	"expo-open-ota/internal/services"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
 	"fmt"
@@ -17,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -184,101 +183,43 @@ func putNoUpdateAvailableInResponse(w http.ResponseWriter, r *http.Request, runt
 	putResponse(w, r, directive, "directive", runtimeVersion, protocolVersion, requestID)
 }
 
-func ManifestHandler(w http.ResponseWriter, r *http.Request) {
+func ManifestHandler(c *gin.Context) {
 	requestID := uuid.New().String()
 
-	// Verify Firebase token
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		log.Printf("[RequestID: %s] No authorization header provided", requestID)
-		http.Error(w, "No authorization header provided", http.StatusUnauthorized)
+	// Get required headers
+	channelName := c.GetHeader("expo-channel-name")
+	protocolVersionStr := c.GetHeader("expo-protocol-version")
+	platform := c.GetHeader("expo-platform")
+	runtimeVersion := c.GetHeader("expo-runtime-version")
+
+	// Validate headers
+	if channelName == "" || protocolVersionStr == "" || platform == "" || runtimeVersion == "" {
+		log.Printf("[RequestID: %s] Missing required headers", requestID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required headers"})
 		return
 	}
 
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	decodedToken, err := auth.VerifyFirebaseToken(token)
-	if err != nil {
-		log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
-		http.Error(w, "Invalid Firebase token", http.StatusUnauthorized)
-		return
-	}
-
-	// Log user access
-	log.Printf("[RequestID: %s] User %s (%s) checking for updates",
-		requestID,
-		decodedToken.UID,
-		decodedToken.Claims["email"])
-
-	channelName := r.Header.Get("expo-channel-name")
-	if channelName == "" {
-		log.Printf("[RequestID: %s] No channel name provided", requestID)
-		http.Error(w, "No channel name provided", http.StatusBadRequest)
-		return
-	}
-
-	branchMap, err := services.FetchExpoChannelMapping(channelName)
-	if err != nil {
-		log.Printf("[RequestID: %s] Error fetching channel mapping: %v", requestID, err)
-		http.Error(w, "Error fetching channel mapping", http.StatusInternalServerError)
-		return
-	}
-
-	if branchMap == nil {
-		log.Printf("[RequestID: %s] No branch mapping found for channel: %s", requestID, channelName)
-		http.Error(w, "No branch mapping found", http.StatusNotFound)
-		return
-	}
-
-	branch := branchMap.BranchName
-	protocolVersion, err := strconv.ParseInt(r.Header.Get("expo-protocol-version"), 10, 64)
+	protocolVersion, err := strconv.ParseInt(protocolVersionStr, 10, 64)
 	if err != nil {
 		log.Printf("[RequestID: %s] Invalid protocol version: %v", requestID, err)
-		http.Error(w, "Invalid protocol version", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid protocol version"})
 		return
 	}
 
-	platform := r.Header.Get("expo-platform")
-	if platform == "" {
-		platform = r.URL.Query().Get("platform")
-	}
-	if platform == "" || (platform != "ios" && platform != "android") {
-		log.Printf("[RequestID: %s] Invalid platform: %s", requestID, platform)
-		http.Error(w, "Invalid platform", http.StatusBadRequest)
-		return
-	}
-
-	runtimeVersion := r.Header.Get("expo-runtime-version")
-	if runtimeVersion == "" {
-		runtimeVersion = r.URL.Query().Get("runtimeVersion")
-	}
-
-	clientId := r.Header.Get("EAS-Client-ID")
-	currentUpdateId := r.Header.Get("expo-current-update-id")
-	metrics.TrackActiveUser(clientId, platform, runtimeVersion, branch, currentUpdateId)
-
-	if runtimeVersion == "" {
-		log.Printf("[RequestID: %s] No runtime version provided", requestID)
-		http.Error(w, "No runtime version provided", http.StatusBadRequest)
-		return
-	}
-
-	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion)
+	// Get the latest update for this channel and runtime version
+	latestUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(channelName, runtimeVersion)
 	if err != nil {
 		log.Printf("[RequestID: %s] Error getting latest update: %v", requestID, err)
-		http.Error(w, "Error getting latest update", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting latest update"})
 		return
 	}
 
-	if lastUpdate == nil {
-		log.Printf("[RequestID: %s] No update found for runtimeVersion: %s in branch: %s", requestID, runtimeVersion, branch)
-		putNoUpdateAvailableInResponse(w, r, runtimeVersion, protocolVersion, requestID)
+	if latestUpdate == nil {
+		log.Printf("[RequestID: %s] No update found for channel %s and runtime version %s", requestID, channelName, runtimeVersion)
+		c.JSON(http.StatusNotFound, gin.H{"error": "No update found"})
 		return
 	}
 
-	updateType := update.GetUpdateType(*lastUpdate)
-	if updateType == types.NormalUpdate {
-		putUpdateInResponse(w, r, *lastUpdate, platform, protocolVersion, requestID)
-	} else {
-		putRollbackInResponse(w, r, *lastUpdate, platform, protocolVersion, requestID)
-	}
+	// Return the update manifest
+	putUpdateInResponse(c.Writer, c.Request, *latestUpdate, platform, protocolVersion, requestID)
 }

@@ -1,12 +1,12 @@
 package bucket
 
 import (
+	"encoding/json"
 	"errors"
 	"expo-open-ota/config"
 	"expo-open-ota/internal/services"
 	"expo-open-ota/internal/types"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
 	"io"
 	"mime/multipart"
 	"net/url"
@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type LocalBucket struct {
@@ -87,27 +89,19 @@ func (b *LocalBucket) GetUpdates(branch string, runtimeVersion string) ([]types.
 	return updates, nil
 }
 
-func (b *LocalBucket) GetFile(update types.Update, assetPath string) (types.BucketFile, error) {
+func (b *LocalBucket) GetFile(branch string, runtimeVersion string, updateId string, fileName string) (io.ReadCloser, error) {
 	if b.BasePath == "" {
-		return types.BucketFile{}, errors.New("BasePath not set")
+		return nil, errors.New("BasePath not set")
 	}
 
-	filePath := filepath.Join(b.BasePath, update.Branch, update.RuntimeVersion, update.UpdateId, assetPath)
+	filePath := filepath.Join(b.BasePath, branch, runtimeVersion, updateId, fileName)
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return types.BucketFile{}, err
+		return nil, err
 	}
 
-	fileInfo, err := file.Stat()
-	if err != nil {
-		file.Close()
-		return types.BucketFile{}, err
-	}
-	return types.BucketFile{
-		Reader:    file,
-		CreatedAt: fileInfo.ModTime(),
-	}, nil
+	return file, nil
 }
 
 func (b *LocalBucket) GetBranches() ([]string, error) {
@@ -229,4 +223,56 @@ func HandleUploadFile(filePath string, body multipart.File) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (b *LocalBucket) GetUpdate(branch string, runtimeVersion string, updateId string) (*types.Update, error) {
+	if b.BasePath == "" {
+		return nil, errors.New("BasePath not set")
+	}
+
+	metadataPath := filepath.Join(b.BasePath, branch, runtimeVersion, updateId, "metadata.json")
+	file, err := os.Open(metadataPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var metadata types.UpdateMetadata
+	if err := json.NewDecoder(file).Decode(&metadata); err != nil {
+		return nil, err
+	}
+
+	createdAt, err := time.ParseDuration(metadata.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CreatedAt: %w", err)
+	}
+
+	return &types.Update{
+		Branch:         branch,
+		RuntimeVersion: runtimeVersion,
+		UpdateId:       updateId,
+		CreatedAt:      createdAt,
+	}, nil
+}
+
+func (b *LocalBucket) RequestUploadUrlsForFileUpdates(branch string, runtimeVersion string, updateId string, fileNames []string) ([]types.FileUpdateRequest, error) {
+	if b.BasePath == "" {
+		return nil, errors.New("BasePath not set")
+	}
+
+	var requests []types.FileUpdateRequest
+	for _, fileName := range fileNames {
+		url, err := b.RequestUploadUrlForFileUpdate(branch, runtimeVersion, updateId, fileName)
+		if err != nil {
+			return nil, fmt.Errorf("error generating upload URL for %s: %w", fileName, err)
+		}
+
+		filePath := filepath.Join(branch, runtimeVersion, updateId, fileName)
+		requests = append(requests, types.FileUpdateRequest{
+			Url:  url,
+			Path: filePath,
+		})
+	}
+
+	return requests, nil
 }

@@ -7,12 +7,13 @@ import (
 	"expo-open-ota/internal/metrics"
 	"expo-open-ota/internal/middleware"
 	"fmt"
-	"github.com/gorilla/mux"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
@@ -33,67 +34,72 @@ func getDashboardPath() string {
 	return filepath.Join(exeDir, "dashboard", "dist")
 }
 
-func NewRouter() *mux.Router {
-	r := mux.NewRouter()
-	r.Use(middleware.LoggingMiddleware)
+func NewRouter() *gin.Engine {
+	router := gin.Default()
+	router.Use(middleware.LoggingMiddleware)
 
-	r.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		metrics.PrometheusHandler().ServeHTTP(w, r)
-	}).Methods(http.MethodGet)
+	// Health check
+	router.GET("/health", func(c *gin.Context) {
+		c.String(200, "OK")
+	})
 
-	r.HandleFunc("/hc", HealthCheck).Methods(http.MethodGet)
-	r.HandleFunc("/manifest", handlers.ManifestHandler).Methods(http.MethodGet)
-	r.HandleFunc("/assets", handlers.AssetsHandler).Methods(http.MethodGet)
-	r.HandleFunc("/requestUploadUrl/{BRANCH}", handlers.RequestUploadUrlHandler).Methods(http.MethodPost)
-	r.HandleFunc("/uploadLocalFile", handlers.RequestUploadLocalFileHandler).Methods(http.MethodPut)
-	r.HandleFunc("/markUpdateAsUploaded/{BRANCH}", handlers.MarkUpdateAsUploadedHandler).Methods(http.MethodPost)
+	// Metrics
+	router.GET("/metrics", func(c *gin.Context) {
+		metrics.PrometheusHandler().ServeHTTP(c.Writer, c.Request)
+	})
 
-	corsSubrouter := r.PathPrefix("/auth").Subrouter()
-	corsSubrouter.HandleFunc("/login", handlers.LoginHandler).Methods(http.MethodPost)
-	corsSubrouter.HandleFunc("/refreshToken", handlers.RefreshTokenHandler).Methods(http.MethodPost)
+	// API routes
+	api := router.Group("/api")
+	{
+		// Dashboard routes
+		api.GET("/dashboard/settings", handlers.GetSettingsHandler)
+		api.GET("/dashboard/branches", handlers.GetBranchesHandler)
+		api.GET("/dashboard/runtime-versions/:branch", handlers.GetRuntimeVersionsHandler)
+		api.GET("/dashboard/updates/:branch/:runtimeVersion", handlers.GetUpdatesHandler)
+
+		// Update routes
+		api.POST("/update/upload/:branch", middleware.AuthMiddleware, handlers.UploadHandler)
+		api.POST("/update/mark-uploaded/:branch", middleware.AuthMiddleware, handlers.MarkUpdateAsUploadedHandler)
+		api.GET("/update/manifest/:branch/:runtimeVersion", handlers.ManifestHandler)
+		api.GET("/update/assets/:path", handlers.AssetsHandler)
+	}
 
 	dashboardPath := getDashboardPath()
 
 	if dashboard.IsDashboardEnabled() {
-		r.PathPrefix("/dashboard").Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		router.GET("/dashboard/*path", func(c *gin.Context) {
 			// Get env.js
-			if r.URL.Path == "/dashboard/env.js" {
-				w.Header().Set("Content-Type", "application/javascript")
+			if c.Param("path") == "/env.js" {
+				c.Header("Content-Type", "application/javascript")
 				baseURL := config.GetEnv("BASE_URL")
 				if baseURL == "" {
 					baseURL = "http://localhost:3000"
 				}
-				w.Write([]byte(fmt.Sprintf("window.env = { VITE_OTA_API_URL: '%s' };", baseURL)))
+				c.String(200, fmt.Sprintf("window.env = { VITE_OTA_API_URL: '%s' };", baseURL))
 				return
 			}
-			if r.URL.Path == "/dashboard" {
+			if c.Param("path") == "/" {
 				target := "/dashboard/"
-				if r.URL.RawQuery != "" {
-					target += "?" + r.URL.RawQuery
+				if c.Request.URL.RawQuery != "" {
+					target += "?" + c.Request.URL.RawQuery
 				}
-				http.Redirect(w, r, target, http.StatusMovedPermanently)
+				c.Redirect(301, target)
 				return
 			}
 			staticExtensions := []string{".css", ".js", ".svg", ".png", ".json", ".ico"}
 			for _, ext := range staticExtensions {
-				if len(r.URL.Path) > len(ext) && r.URL.Path[len(r.URL.Path)-len(ext):] == ext {
-					filePath := filepath.Join(dashboardPath, r.URL.Path[len("/dashboard/"):])
+				if len(c.Param("path")) > len(ext) && c.Param("path")[len(c.Param("path"))-len(ext):] == ext {
+					filePath := filepath.Join(dashboardPath, c.Param("path")[len("/dashboard/"):])
 					fmt.Println("Serving file", filePath)
-					http.ServeFile(w, r, filePath)
+					c.File(filePath)
 					return
 				}
 			}
 			filePath := filepath.Join(dashboardPath, "index.html")
 			fmt.Println("Serving file", filePath)
-			http.ServeFile(w, r, filePath)
-		}))
+			c.File(filePath)
+		})
 	}
 
-	authSubrouter := r.PathPrefix("/api").Subrouter()
-	authSubrouter.Use(middleware.AuthMiddleware)
-	authSubrouter.HandleFunc("/settings", handlers.GetSettingsHandler).Methods(http.MethodGet)
-	authSubrouter.HandleFunc("/branches", handlers.GetBranchesHandler).Methods(http.MethodGet)
-	authSubrouter.HandleFunc("/branch/{BRANCH}/runtimeVersions", handlers.GetRuntimeVersionsHandler).Methods(http.MethodGet)
-	authSubrouter.HandleFunc("/branch/{BRANCH}/runtimeVersion/{RUNTIME_VERSION}/updates", handlers.GetUpdatesHandler).Methods(http.MethodGet)
-	return r
+	return router
 }
