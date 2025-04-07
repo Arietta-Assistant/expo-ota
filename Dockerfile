@@ -16,6 +16,12 @@ WORKDIR /app
 # Copy go mod and sum files
 COPY go.mod go.sum ./
 
+# Download specific problematic dependencies first
+RUN go get firebase.google.com/go/v4@v4.14.0 && \
+    go get gorm.io/driver/postgres && \
+    go get gorm.io/gorm && \
+    go get google.golang.org/api/option
+
 # Update dependencies and download them
 RUN go mod tidy && go mod download
 
