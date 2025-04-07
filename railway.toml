@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "go mod download && GOOS=linux GOARCH=amd64 go build -o main ./cmd/api"
+buildCommand = "apk add --no-cache git && go mod download && GOOS=linux GOARCH=amd64 go build -o main ./cmd/api"
 
 [deploy]
 startCommand = "./main"

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"expo-open-ota/config"
 	"expo-open-ota/internal/db"
@@ -10,20 +11,25 @@ import (
 	"log"
 	"time"
 
-	firebase "firebase.google.com/go"
-	"firebase.google.com/go/auth"
+	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/auth"
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/api/option"
 )
 
 var (
-	firebaseApp *firebase.App
-	authClient  *auth.Client
+	authClient *auth.Client
 )
 
 func init() {
 	// Initialize Firebase Admin SDK
-	opt := option.WithCredentialsFile(config.GetEnv("FIREBASE_SERVICE_ACCOUNT_PATH"))
+	encodedServiceAccount := config.GetEnv("FIREBASE_SERVICE_ACCOUNT")
+	serviceAccount, err := base64.StdEncoding.DecodeString(encodedServiceAccount)
+	if err != nil {
+		log.Fatalf("Error decoding Firebase service account: %v", err)
+	}
+
+	opt := option.WithCredentialsJSON(serviceAccount)
 	app, err := firebase.NewApp(context.Background(), nil, opt)
 	if err != nil {
 		log.Fatalf("Error initializing Firebase app: %v", err)
@@ -34,7 +40,6 @@ func init() {
 		log.Fatalf("Error getting Auth client: %v", err)
 	}
 
-	firebaseApp = app
 	authClient = client
 }
 

@@ -9,8 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/cloudfront/sign v1.8.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.73.2
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.34.13
-	firebase.google.com/go v3.13.0+incompatible
-	firebase.google.com/go/storage v1.0.0
+	firebase.google.com/go/v4 v4.14.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/handlers v1.5.2
