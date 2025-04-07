@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"path/filepath"
 	"sync"
 )
 
@@ -28,6 +27,9 @@ const (
 
 type Bucket interface {
 	GetUpdate(branch string, runtimeVersion string, updateId string) (*types.Update, error)
+	GetUpdates(branch string, runtimeVersion string) ([]types.Update, error)
+	GetBranches() ([]string, error)
+	GetRuntimeVersions(branch string) ([]RuntimeVersionWithStats, error)
 	GetFile(branch string, runtimeVersion string, updateId string, fileName string) (io.ReadCloser, error)
 	UploadFileIntoUpdate(update types.Update, fileName string, content io.Reader) error
 	DeleteUpdateFolder(branch string, runtimeVersion string, updateId string) error
@@ -94,26 +96,30 @@ func RequestUploadUrlsForFileUpdates(branch string, runtimeVersion string, updat
 	for fileName := range uniqueFileNames {
 		go func(fileName string) {
 			defer wg.Done()
-			requestUploadUrl, err := bucket.RequestUploadUrlForFileUpdate(branch, runtimeVersion, updateId, fileName)
+			fileRequests, err := bucket.RequestUploadUrlsForFileUpdates(branch, runtimeVersion, updateId, []string{fileName})
 			if err != nil {
 				errChan <- err
 				return
 			}
-			mu.Lock()
-			requests = append(requests, FileUploadRequest{
-				RequestUploadUrl: requestUploadUrl,
-				FileName:         filepath.Base(fileName),
-				FilePath:         fileName,
-			})
-			mu.Unlock()
+			if len(fileRequests) > 0 {
+				mu.Lock()
+				requests = append(requests, FileUploadRequest{
+					RequestUploadUrl: fileRequests[0].Url,
+					FileName:         fileName,
+					FilePath:         fileRequests[0].Path,
+				})
+				mu.Unlock()
+			}
 		}(fileName)
 	}
 
 	wg.Wait()
 	close(errChan)
 
-	if len(errChan) > 0 {
-		return nil, <-errChan
+	for err := range errChan {
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return requests, nil

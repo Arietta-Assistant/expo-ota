@@ -9,6 +9,7 @@ import (
 	"expo-open-ota/internal/dashboard"
 	"expo-open-ota/internal/types"
 	"fmt"
+	"io"
 	"mime"
 	"net/url"
 	"sort"
@@ -53,9 +54,9 @@ func MarkUpdateAsChecked(update types.Update) error {
 func IsUpdateValid(Update types.Update) bool {
 	resolvedBucket := bucket.GetBucket()
 	// Search for .check file in the update
-	file, _ := resolvedBucket.GetFile(Update, ".check")
-	if file.Reader != nil {
-		defer file.Reader.Close()
+	file, err := resolvedBucket.GetFile(Update.Branch, Update.RuntimeVersion, Update.UpdateId, ".check")
+	if err == nil && file != nil {
+		defer file.Close()
 		return true
 	}
 	return false
@@ -101,7 +102,7 @@ func VerifyUploadedUpdate(update types.Update) error {
 
 	resolvedBucket := bucket.GetBucket()
 	for _, file := range files {
-		_, err := resolvedBucket.GetFile(update, file)
+		_, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, file)
 		if err != nil {
 			return fmt.Errorf("missing file: %s in update", file)
 		}
@@ -188,9 +189,9 @@ func GetLatestUpdateBundlePathForRuntimeVersion(branch string, runtimeVersion st
 
 func GetUpdateType(update types.Update) types.UpdateType {
 	resolvedBucket := bucket.GetBucket()
-	file, err := resolvedBucket.GetFile(update, "rollback")
-	if err == nil && file.Reader != nil {
-		defer file.Reader.Close()
+	file, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, "rollback")
+	if err == nil && file != nil {
+		defer file.Close()
 		return types.Rollback
 	}
 	return types.NormalUpdate
@@ -198,13 +199,13 @@ func GetUpdateType(update types.Update) types.UpdateType {
 
 func GetExpoConfig(update types.Update) (json.RawMessage, error) {
 	resolvedBucket := bucket.GetBucket()
-	resp, err := resolvedBucket.GetFile(update, "expoConfig.json")
+	file, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, "expoConfig.json")
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Reader.Close()
+	defer file.Close()
 	var expoConfig json.RawMessage
-	err = json.NewDecoder(resp.Reader).Decode(&expoConfig)
+	err = json.NewDecoder(file).Decode(&expoConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -223,20 +224,21 @@ func GetMetadata(update types.Update) (types.UpdateMetadata, error) {
 		return metadata, nil
 	}
 	resolvedBucket := bucket.GetBucket()
-	file, errFile := resolvedBucket.GetFile(update, "metadata.json")
+	file, errFile := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, "metadata.json")
 	if errFile != nil {
 		return types.UpdateMetadata{}, errFile
 	}
-	createdAt := file.CreatedAt
+	defer file.Close()
+
 	var metadata types.UpdateMetadata
 	var metadataJson types.MetadataObject
-	err := json.NewDecoder(file.Reader).Decode(&metadataJson)
-	defer file.Reader.Close()
+	err := json.NewDecoder(file).Decode(&metadataJson)
 	if err != nil {
 		fmt.Println("error decoding metadata json:", err)
 		return types.UpdateMetadata{}, err
 	}
-	metadata.CreatedAt = createdAt.UTC().Format("2006-01-02T15:04:05.000Z")
+
+	metadata.CreatedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	metadata.MetadataJSON = metadataJson
 	stringifiedMetadata, err := json.Marshal(metadata.MetadataJSON)
 	if err != nil {
@@ -287,23 +289,24 @@ func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset b
 		return manifestAsset, nil
 	}
 	resolvedBucket := bucket.GetBucket()
-	assetFilePath := asset.Path
-	assetFile, errAssetFile := resolvedBucket.GetFile(update, asset.Path)
-	if errAssetFile != nil {
-		return types.ManifestAsset{}, errAssetFile
+	assetFile, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, asset.Path)
+	if err != nil {
+		return types.ManifestAsset{}, err
+	}
+	defer assetFile.Close()
+
+	// Read the file content
+	content, err := io.ReadAll(assetFile)
+	if err != nil {
+		return types.ManifestAsset{}, err
 	}
 
-	byteAsset, errAsset := bucket.ConvertReadCloserToBytes(assetFile.Reader)
-	defer assetFile.Reader.Close()
-	if errAsset != nil {
-		return types.ManifestAsset{}, errAsset
-	}
-	assetHash, errHash := crypto.CreateHash(byteAsset, "sha256", "base64")
+	assetHash, errHash := crypto.CreateHash(content, "sha256", "base64")
 	if errHash != nil {
 		return types.ManifestAsset{}, errHash
 	}
 	urlEncodedHash := crypto.GetBase64URLEncoding(assetHash)
-	key, errKey := crypto.CreateHash(byteAsset, "md5", "hex")
+	key, errKey := crypto.CreateHash(content, "md5", "hex")
 	if errKey != nil {
 		return types.ManifestAsset{}, errKey
 	}
@@ -317,7 +320,7 @@ func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset b
 	if isLaunchAsset {
 		contentType = mime.TypeByExtension(asset.Ext)
 	}
-	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), assetFilePath, update.RuntimeVersion, platform)
+	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), asset.Path, update.RuntimeVersion, platform)
 	if errUrl != nil {
 		return types.ManifestAsset{}, errUrl
 	}
@@ -420,18 +423,24 @@ func ComposeUpdateManifest(
 
 func CreateRollbackDirective(update types.Update) (types.RollbackDirective, error) {
 	resolvedBucket := bucket.GetBucket()
-	object, err := resolvedBucket.GetFile(update, "rollback")
+	object, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, "rollback")
 	if err != nil {
 		return types.RollbackDirective{}, err
 	}
-	commitTime := object.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
-	defer object.Reader.Close()
-	return types.RollbackDirective{
-		Type: "rollBackToEmbedded",
-		Parameters: types.RollbackDirectiveParameters{
-			CommitTime: commitTime,
-		},
-	}, nil
+	defer object.Close()
+
+	content, err := io.ReadAll(object)
+	if err != nil {
+		return types.RollbackDirective{}, err
+	}
+
+	var rollbackDirective types.RollbackDirective
+	err = json.Unmarshal(content, &rollbackDirective)
+	if err != nil {
+		return types.RollbackDirective{}, err
+	}
+
+	return rollbackDirective, nil
 }
 
 func CreateNoUpdateAvailableDirective() types.NoUpdateAvailableDirective {
@@ -441,19 +450,20 @@ func CreateNoUpdateAvailableDirective() types.NoUpdateAvailableDirective {
 }
 
 func RetrieveUpdateCommitHashAndPlatform(update types.Update) (string, string, error) {
-	resolvedBucket := bucket.GetBucket()
-	file, err := resolvedBucket.GetFile(update, "update-metadata.json")
+	metadata, err := GetMetadata(update)
 	if err != nil {
 		return "", "", err
 	}
-	defer file.Reader.Close()
-	var metadata struct {
-		Platform   string `json:"platform"`
-		CommitHash string `json:"commitHash"`
+
+	commitHash, ok := metadata.MetadataJSON.Extra["commitHash"].(string)
+	if !ok {
+		return "", "", fmt.Errorf("commitHash not found in metadata")
 	}
-	err = json.NewDecoder(file.Reader).Decode(&metadata)
-	if err != nil {
-		return "", "", err
+
+	platform, ok := metadata.MetadataJSON.Extra["platform"].(string)
+	if !ok {
+		return "", "", fmt.Errorf("platform not found in metadata")
 	}
-	return metadata.CommitHash, metadata.Platform, nil
+
+	return commitHash, platform, nil
 }

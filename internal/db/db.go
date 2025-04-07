@@ -40,11 +40,11 @@ func init() {
 // UpsertUser creates or updates a user record
 func UpsertUser(user User) error {
 	return db.Where(User{ID: user.ID}).
-		Assign(User{
-			Email:       user.Email,
-			Name:        user.Name,
-			LastSeen:    user.LastSeen,
-			UpdateCount: gorm.Expr("update_count + 1"),
+		Assign(map[string]interface{}{
+			"email":        user.Email,
+			"name":         user.Name,
+			"last_seen":    user.LastSeen,
+			"update_count": gorm.Expr("update_count + 1"),
 		}).
 		FirstOrCreate(&user).Error
 }

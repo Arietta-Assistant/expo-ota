@@ -5,9 +5,11 @@ import (
 	"expo-open-ota/internal/cdn"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
+	"io"
 	"log"
 	"mime"
 	"net/http"
+	"time"
 )
 
 type AssetsRequest struct {
@@ -89,7 +91,7 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 	}
 
 	resolvedBucket := bucket.GetBucket()
-	asset, err := resolvedBucket.GetFile(*lastUpdate, req.AssetName)
+	asset, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, req.AssetName)
 	if err != nil {
 		log.Printf("[RequestID: %s] Error getting asset: %v", requestID, err)
 		return AssetsResponse{StatusCode: http.StatusInternalServerError, Body: []byte("Error getting asset")}, nil, "", nil
@@ -109,15 +111,20 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		"Content-Type":          contentType,
 	}
 
+	bucketFile := &types.BucketFile{
+		Reader:    asset,
+		CreatedAt: time.Now(), // Since we don't have the actual creation time from Firebase Storage
+	}
+
 	return AssetsResponse{
 		StatusCode:  http.StatusOK,
 		Headers:     headers,
 		ContentType: contentType,
-	}, &asset, lastUpdate.UpdateId, nil
+	}, bucketFile, lastUpdate.UpdateId, nil
 }
 
 func HandleAssetsWithFile(req AssetsRequest) (AssetsResponse, error) {
-	resp, asset, _, err := getAssetMetadata(req, true)
+	resp, bucketFile, _, err := getAssetMetadata(req, true)
 	if err != nil {
 		return resp, err
 	}
@@ -128,7 +135,7 @@ func HandleAssetsWithFile(req AssetsRequest) (AssetsResponse, error) {
 		}, nil
 	}
 
-	if asset == nil {
+	if bucketFile == nil {
 		log.Printf("[RequestID: %s] Resolved file is nil", req.RequestID)
 		return AssetsResponse{
 			StatusCode: http.StatusInternalServerError,
@@ -136,8 +143,8 @@ func HandleAssetsWithFile(req AssetsRequest) (AssetsResponse, error) {
 		}, nil
 	}
 
-	buffer, err := bucket.ConvertReadCloserToBytes(asset.Reader)
-	defer asset.Reader.Close()
+	buffer, err := io.ReadAll(bucketFile.Reader)
+	defer bucketFile.Reader.Close()
 	if err != nil {
 		log.Printf("[RequestID: %s] Error converting asset to buffer: %v", req.RequestID, err)
 		return AssetsResponse{

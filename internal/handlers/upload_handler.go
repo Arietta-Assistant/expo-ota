@@ -7,6 +7,7 @@ import (
 	"expo-open-ota/internal/branch"
 	"expo-open-ota/internal/bucket"
 	cache2 "expo-open-ota/internal/cache"
+	"expo-open-ota/internal/config"
 	"expo-open-ota/internal/helpers"
 	"expo-open-ota/internal/services"
 	"expo-open-ota/internal/types"
@@ -149,18 +150,21 @@ func RequestUploadLocalFileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if !auth.VerifyFirebaseToken(token) {
-		log.Printf("[RequestID: %s] Invalid Firebase token", requestID)
+	tokenInfo, err := auth.VerifyFirebaseToken(token)
+	if err != nil || tokenInfo == nil {
+		log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
 		http.Error(w, "Invalid Firebase token", http.StatusUnauthorized)
 		return
 	}
 
-	bucketType := bucket.ResolveBucketType()
-	if bucketType != bucket.LocalBucketType {
+	// Check if we're using a local bucket
+	bucketType := config.GetEnv("BUCKET_TYPE")
+	if bucketType != string(bucket.LocalBucketType) {
 		log.Printf("Invalid bucket type: %s", bucketType)
 		http.Error(w, "Invalid bucket type", http.StatusInternalServerError)
 		return
 	}
+
 	branchName := r.URL.Query().Get("branch")
 	if branchName == "" {
 		log.Printf("[RequestID: %s] No branch name provided", requestID)
@@ -264,8 +268,9 @@ func RequestUploadUrlHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if !auth.VerifyFirebaseToken(token) {
-		log.Printf("[RequestID: %s] Invalid Firebase token", requestID)
+	tokenInfo, err := auth.VerifyFirebaseToken(token)
+	if err != nil || tokenInfo == nil {
+		log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
 		http.Error(w, "Invalid Firebase token", http.StatusUnauthorized)
 		return
 	}
