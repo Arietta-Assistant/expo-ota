@@ -107,13 +107,18 @@ func (b *FirebaseBucket) DeleteUpdateFolder(branch string, runtimeVersion string
 func (b *FirebaseBucket) RequestUploadUrlsForFileUpdates(branch string, runtimeVersion string, updateId string, fileNames []string) ([]types.FileUpdateRequest, error) {
 	var requests []types.FileUpdateRequest
 
+	bucketName := config.GetEnv("FIREBASE_STORAGE_BUCKET")
+	if bucketName == "" {
+		return nil, fmt.Errorf("FIREBASE_STORAGE_BUCKET environment variable is not set")
+	}
+
 	for _, fileName := range fileNames {
 		objectPath := path.Join("updates", branch, runtimeVersion, updateId, fileName)
 		opts := &storage.SignedURLOptions{
 			Method:  "PUT",
 			Headers: []string{"Content-Type: application/octet-stream"},
 		}
-		url, err := storage.SignedURL("your-firebase-storage-bucket-name", objectPath, opts)
+		url, err := storage.SignedURL(bucketName, objectPath, opts)
 		if err != nil {
 			return nil, fmt.Errorf("error generating signed URL for %s: %w", fileName, err)
 		}
