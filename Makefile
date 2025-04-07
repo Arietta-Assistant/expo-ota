@@ -55,4 +55,7 @@ define GENERATE_HTML
 	fi
 endef
 
-.PHONY: docker html
+.PHONY: docker html migrate
+
+migrate:
+	go run scripts/apply_migrations.go
