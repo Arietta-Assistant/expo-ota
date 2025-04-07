@@ -5,7 +5,7 @@ RUN npm ci
 COPY dashboard ./
 RUN npm run build
 
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24.2-alpine AS builder
 
 # Install git and build dependencies
 RUN apk add --no-cache git
