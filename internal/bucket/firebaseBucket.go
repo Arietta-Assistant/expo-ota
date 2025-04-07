@@ -2,6 +2,7 @@ package bucket
 
 import (
 	"context"
+	"encoding/base64"
 	"expo-open-ota/config"
 	"expo-open-ota/internal/types"
 	"fmt"
@@ -23,9 +24,15 @@ func NewFirebaseBucket() (*FirebaseBucket, error) {
 	ctx := context.Background()
 
 	// Get Firebase credentials from environment variables
-	credentials := []byte(config.GetEnv("FIREBASE_CREDENTIALS"))
-	if len(credentials) == 0 {
-		return nil, fmt.Errorf("FIREBASE_CREDENTIALS environment variable is not set")
+	base64Credentials := config.GetEnv("FIREBASE_SERVICE_ACCOUNT")
+	if base64Credentials == "" {
+		return nil, fmt.Errorf("FIREBASE_SERVICE_ACCOUNT environment variable is not set")
+	}
+
+	// Decode base64 credentials
+	credentials, err := base64.StdEncoding.DecodeString(base64Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding Firebase credentials: %w", err)
 	}
 
 	client, err := storage.NewClient(ctx, option.WithCredentialsJSON(credentials))
