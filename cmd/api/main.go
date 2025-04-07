@@ -5,10 +5,8 @@ import (
 	"expo-open-ota/internal/metrics"
 	infrastructure "expo-open-ota/internal/router"
 	"log"
-	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/handlers"
 )
 
 func init() {
@@ -19,15 +17,24 @@ func init() {
 
 func main() {
 	router := infrastructure.NewRouter()
-	log.Println("Server is running on port 3000")
-	corsOptions := handlers.CORS(
-		handlers.AllowedHeaders([]string{"Authorization", "Content-Type"}),
-		handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}),
-		handlers.AllowedOrigins([]string{"*"}),
-		handlers.AllowCredentials(),
-	)
-	err := http.ListenAndServe(":3000", corsOptions(router))
-	if err != nil {
+
+	// Add CORS middleware
+	router.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	})
+
+	log.Println("Server is running on port 8080")
+	if err := router.Run(":8080"); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }
