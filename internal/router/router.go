@@ -8,17 +8,12 @@ import (
 	"expo-open-ota/internal/middleware"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
-
-func HealthCheck(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-}
 
 func getDashboardPath() string {
 	exePath, err := os.Executable()
@@ -39,9 +34,7 @@ func NewRouter() *gin.Engine {
 	router.Use(middleware.LoggingMiddleware)
 
 	// Health check
-	router.GET("/health", func(c *gin.Context) {
-		c.String(200, "OK")
-	})
+	router.GET("/health", handlers.HealthHandler)
 
 	// Metrics
 	router.GET("/metrics", func(c *gin.Context) {
