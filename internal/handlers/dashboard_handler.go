@@ -82,36 +82,37 @@ func GetDashboardConfig(c *gin.Context) {
 }
 
 func GetSettingsHandler(w http.ResponseWriter, r *http.Request) {
-
 	// Retrieve all in config.GetEnv & return as JSON
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(SettingsEnv{
-		BASE_URL:    config.GetEnv("BASE_URL"),
-		EXPO_APP_ID: config.GetEnv("EXPO_APP_ID"),
-		// Only retrieve the first 5 characters of the token
-		EXPO_ACCESS_TOKEN:                      "***" + config.GetEnv("EXPO_ACCESS_TOKEN")[:5],
-		CACHE_MODE:                             config.GetEnv("CACHE_MODE"),
-		REDIS_HOST:                             config.GetEnv("REDIS_HOST"),
-		REDIS_PORT:                             config.GetEnv("REDIS_PORT"),
-		STORAGE_MODE:                           config.GetEnv("STORAGE_MODE"),
-		S3_BUCKET_NAME:                         config.GetEnv("S3_BUCKET_NAME"),
-		LOCAL_BUCKET_BASE_PATH:                 config.GetEnv("LOCAL_BUCKET_BASE_PATH"),
-		KEYS_STORAGE_TYPE:                      config.GetEnv("KEYS_STORAGE_TYPE"),
-		AWSSM_EXPO_PUBLIC_KEY_SECRET_ID:        config.GetEnv("AWSSM_EXPO_PUBLIC_KEY_SECRET_ID"),
-		AWSSM_EXPO_PRIVATE_KEY_SECRET_ID:       config.GetEnv("AWSSM_EXPO_PRIVATE_KEY_SECRET_ID"),
-		PUBLIC_EXPO_KEY_B64:                    config.GetEnv("PUBLIC_EXPO_KEY_B64"),
-		PUBLIC_LOCAL_EXPO_KEY_PATH:             config.GetEnv("PUBLIC_LOCAL_EXPO_KEY_PATH"),
-		PRIVATE_LOCAL_EXPO_KEY_PATH:            config.GetEnv("PRIVATE_LOCAL_EXPO_KEY_PATH"),
-		AWS_REGION:                             config.GetEnv("AWS_REGION"),
-		AWS_ACCESS_KEY_ID:                      config.GetEnv("AWS_ACCESS_KEY_ID"),
-		CLOUDFRONT_DOMAIN:                      config.GetEnv("CLOUDFRONT_DOMAIN"),
-		CLOUDFRONT_KEY_PAIR_ID:                 config.GetEnv("CLOUDFRONT_KEY_PAIR_ID"),
-		CLOUDFRONT_PRIVATE_KEY_B64:             config.GetEnv("CLOUDFRONT_PRIVATE_KEY_B64"),
-		AWSSM_CLOUDFRONT_PRIVATE_KEY_SECRET_ID: config.GetEnv("AWSSM_CLOUDFRONT_PRIVATE_KEY_SECRET_ID"),
-		PRIVATE_LOCAL_CLOUDFRONT_KEY_PATH:      config.GetEnv("PRIVATE_LOCAL_CLOUDFRONT_KEY_PATH"),
-		PROMETHEUS_ENABLED:                     config.GetEnv("PROMETHEUS_ENABLED"),
-	})
+
+	expoToken := config.GetEnv("EXPO_ACCESS_TOKEN")
+	tokenDisplay := ""
+	if expoToken != "" {
+		tokenDisplay = "***" + expoToken[:5]
+	}
+
+	settings := DashboardConfig{
+		BASE_URL:                      config.GetEnv("BASE_URL"),
+		EXPO_APP_ID:                   config.GetEnv("EXPO_APP_ID"),
+		EXPO_ACCESS_TOKEN:             tokenDisplay,
+		CACHE_MODE:                    config.GetEnv("CACHE_MODE"),
+		REDIS_HOST:                    config.GetEnv("REDIS_HOST"),
+		REDIS_PORT:                    config.GetEnv("REDIS_PORT"),
+		STORAGE_MODE:                  config.GetEnv("STORAGE_MODE"),
+		S3_BUCKET_NAME:                config.GetEnv("S3_BUCKET_NAME"),
+		LOCAL_BUCKET_BASE_PATH:        config.GetEnv("LOCAL_BUCKET_BASE_PATH"),
+		KEYS_STORAGE_TYPE:             config.GetEnv("KEYS_STORAGE_TYPE"),
+		KEYS_STORAGE_BASE_PATH:        config.GetEnv("KEYS_STORAGE_BASE_PATH"),
+		KEYS_STORAGE_BUCKET_NAME:      config.GetEnv("KEYS_STORAGE_BUCKET_NAME"),
+		KEYS_STORAGE_ACCESS_KEY:       config.GetEnv("KEYS_STORAGE_ACCESS_KEY"),
+		KEYS_STORAGE_SECRET_KEY:       config.GetEnv("KEYS_STORAGE_SECRET_KEY"),
+		KEYS_STORAGE_ENDPOINT:         config.GetEnv("KEYS_STORAGE_ENDPOINT"),
+		KEYS_STORAGE_REGION:           config.GetEnv("KEYS_STORAGE_REGION"),
+		KEYS_STORAGE_FORCE_PATH_STYLE: config.GetEnv("KEYS_STORAGE_FORCE_PATH_STYLE") == "true",
+	}
+
+	json.NewEncoder(w).Encode(settings)
 }
 
 func GetBranchesHandler(w http.ResponseWriter, r *http.Request) {
