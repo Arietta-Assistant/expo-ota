@@ -185,20 +185,16 @@ func RequestUploadLocalFileHandler(w http.ResponseWriter, r *http.Request) {
 func RequestUploadUrlHandler(c *gin.Context) {
 	requestID := uuid.New().String()
 
-	// Verify Firebase token
+	// Check for Firebase token if present
 	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		log.Printf("[RequestID: %s] No authorization header provided", requestID)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "No authorization header provided"})
-		return
-	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	tokenInfo, err := auth.VerifyFirebaseToken(token)
-	if err != nil || tokenInfo == nil {
-		log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Firebase token"})
-		return
+	if authHeader != "" {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		_, err := auth.VerifyFirebaseToken(token)
+		if err != nil {
+			log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Firebase token"})
+			return
+		}
 	}
 
 	branchName := c.Param("branch")
