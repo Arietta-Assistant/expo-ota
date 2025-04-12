@@ -2,17 +2,20 @@ package infrastructure
 
 import (
 	"expo-open-ota/config"
+	"expo-open-ota/internal/bucket"
 	"expo-open-ota/internal/dashboard"
 	"expo-open-ota/internal/handlers"
 	"expo-open-ota/internal/metrics"
 	"expo-open-ota/internal/middleware"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func getDashboardPath() string {
@@ -41,8 +44,84 @@ func NewRouter() *gin.Engine {
 		metrics.PrometheusHandler().ServeHTTP(c.Writer, c.Request)
 	})
 
-	// Add route for eoas client compatibility
+	// Add route for eoas client compatibility with different formats
+	// Format 1: Original
 	router.POST("/requestUploadUrl/:branch", handlers.RequestUploadUrlHandler)
+
+	// Format 2: Direct requestUploadUrl
+	router.POST("/requestUploadUrl-v2/:branch", func(c *gin.Context) {
+		// Get the original parameters
+		branchName := c.Param("branch")
+		runtimeVersion := c.Query("runtimeVersion")
+
+		// Get JSON request body
+		var request handlers.FileNamesRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON body"})
+			return
+		}
+
+		// Generate update ID
+		updateId := uuid.New().String()
+
+		// Get bucket
+		resolvedBucket := bucket.GetBucket()
+		requests, err := resolvedBucket.RequestUploadUrlsForFileUpdates(branchName, runtimeVersion, updateId, request.FileNames)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error requesting upload URLs"})
+			return
+		}
+
+		// Create a different response format
+		urls := make(map[string]string)
+		for _, req := range requests {
+			fileName := strings.TrimPrefix(req.Path, fmt.Sprintf("updates/%s/%s/%s/", branchName, runtimeVersion, updateId))
+			urls[fileName] = req.Url
+		}
+
+		// Different format
+		c.JSON(http.StatusOK, gin.H{
+			"requestUploadUrl": urls[request.FileNames[0]],
+			"updateId":         updateId,
+		})
+	})
+
+	// Format 3: Try array format
+	router.POST("/requestUploadUrl-v3/:branch", func(c *gin.Context) {
+		// Get the original parameters
+		branchName := c.Param("branch")
+		runtimeVersion := c.Query("runtimeVersion")
+
+		// Get JSON request body
+		var request handlers.FileNamesRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON body"})
+			return
+		}
+
+		// Generate update ID
+		updateId := uuid.New().String()
+
+		// Get bucket
+		resolvedBucket := bucket.GetBucket()
+		requests, err := resolvedBucket.RequestUploadUrlsForFileUpdates(branchName, runtimeVersion, updateId, request.FileNames)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error requesting upload URLs"})
+			return
+		}
+
+		// Direct format - Just a string with the URL
+		if len(requests) > 0 {
+			c.String(http.StatusOK, requests[0].Url)
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "No upload URLs generated"})
+		}
+	})
+
+	// Another format that might be compatible with eoas
+	router.POST("/requestUploadUrls/:branch", func(c *gin.Context) {
+		handlers.RequestUploadUrlHandler(c)
+	})
 
 	// API routes
 	api := router.Group("/api")
