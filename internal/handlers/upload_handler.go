@@ -302,23 +302,21 @@ func RequestUploadUrlHandler(c *gin.Context) {
 		return
 	}
 
-	// Create a map-based response where each key is the file name and value contains requestUploadUrl
-	uploadUrlMap := make(map[string]map[string]string)
+	// Create an array of upload requests in the format expected by the client
+	uploadRequests := make([]map[string]string, 0, len(requests))
 
 	for _, req := range requests {
 		fileName := strings.TrimPrefix(req.Path, fmt.Sprintf("updates/%s/%s/%s/", branchName, runtimeVersion, updateId))
-		uploadUrlMap[fileName] = map[string]string{
+		uploadRequests = append(uploadRequests, map[string]string{
 			"requestUploadUrl": req.Url,
-		}
+			"fileName":         fileName,
+			"filePath":         req.Path,
+		})
 	}
 
 	response := map[string]interface{}{
-		"updateId": updateId,
-	}
-
-	// Add all the file URLs directly to the response
-	for fileName, urlInfo := range uploadUrlMap {
-		response[fileName] = urlInfo
+		"updateId":       updateId,
+		"uploadRequests": uploadRequests,
 	}
 
 	// Log the response for debugging
