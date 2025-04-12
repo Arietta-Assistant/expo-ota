@@ -295,8 +295,18 @@ func RequestUploadUrlHandler(c *gin.Context) {
 		return
 	}
 
+	// Transform the response to match what eoas client expects
+	formattedRequests := []map[string]interface{}{}
+	for _, req := range requests {
+		formattedRequests = append(formattedRequests, map[string]interface{}{
+			"requestUploadUrl": req.Url,
+			"fileName":         strings.TrimPrefix(req.Path, fmt.Sprintf("updates/%s/%s/%s/", branchName, runtimeVersion, updateId)),
+			"filePath":         req.Path,
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"updateId": updateId,
-		"requests": requests,
+		"requests": formattedRequests,
 	})
 }
