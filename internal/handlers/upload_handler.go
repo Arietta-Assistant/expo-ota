@@ -295,22 +295,35 @@ func RequestUploadUrlHandler(c *gin.Context) {
 		return
 	}
 
-	// Completely simplified structure with requestUploadUrl directly accessible
-	if len(requests) > 0 {
-		// Create a response specifically for eoas client
-		// Return a flat structure with requestUploadUrl at the top level
-		response := map[string]interface{}{
-			"requestUploadUrl": requests[0].Url,
-			"updateId":         updateId,
-		}
-
-		// Log the response for debugging
-		responseJSON, _ := json.Marshal(response)
-		log.Printf("[RequestID: %s] Response body: %s", requestID, string(responseJSON))
-
-		c.JSON(http.StatusOK, response)
-	} else {
+	// Check if we have any URLs
+	if len(requests) == 0 {
 		log.Printf("[RequestID: %s] No URLs generated", requestID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "No upload URLs generated"})
+		return
 	}
+
+	// Create a map-based response where each key is the file name and value contains requestUploadUrl
+	uploadUrlMap := make(map[string]map[string]string)
+
+	for _, req := range requests {
+		fileName := strings.TrimPrefix(req.Path, fmt.Sprintf("updates/%s/%s/%s/", branchName, runtimeVersion, updateId))
+		uploadUrlMap[fileName] = map[string]string{
+			"requestUploadUrl": req.Url,
+		}
+	}
+
+	response := map[string]interface{}{
+		"updateId": updateId,
+	}
+
+	// Add all the file URLs directly to the response
+	for fileName, urlInfo := range uploadUrlMap {
+		response[fileName] = urlInfo
+	}
+
+	// Log the response for debugging
+	responseJSON, _ := json.Marshal(response)
+	log.Printf("[RequestID: %s] Response body: %s", requestID, string(responseJSON))
+
+	c.JSON(http.StatusOK, response)
 }
