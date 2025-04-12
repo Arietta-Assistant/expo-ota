@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"expo-open-ota/internal/auth"
 	"expo-open-ota/internal/bucket"
 	"expo-open-ota/internal/config"
@@ -230,9 +231,17 @@ func RequestUploadUrlHandler(c *gin.Context) {
 
 	buildNumber := c.Query("buildNumber")
 	if buildNumber == "" {
-		log.Printf("[RequestID: %s] No build number provided", requestID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No build number provided"})
-		return
+		// Try to get build number from expo-extra-params
+		extraParams := c.GetHeader("expo-extra-params")
+		if extraParams != "" {
+			// Parse the extra params JSON
+			var extra map[string]interface{}
+			if err := json.Unmarshal([]byte(extraParams), &extra); err == nil {
+				if updateCode, ok := extra["updateCode"].(string); ok {
+					buildNumber = updateCode
+				}
+			}
+		}
 	}
 
 	var request FileNamesRequest
