@@ -41,6 +41,9 @@ func NewRouter() *gin.Engine {
 		metrics.PrometheusHandler().ServeHTTP(c.Writer, c.Request)
 	})
 
+	// Add route for eoas client compatibility
+	router.POST("/requestUploadUrl/:branch", handlers.RequestUploadUrlHandler)
+
 	// API routes
 	api := router.Group("/api")
 	{
