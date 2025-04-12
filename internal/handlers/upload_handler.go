@@ -208,6 +208,15 @@ func RequestUploadUrlHandler(c *gin.Context) {
 		return
 	}
 
+	// Check for channel override in headers
+	channel := c.GetHeader("expo-channel")
+	if channel == "" {
+		channel = c.GetHeader("expo-extra-params")
+	}
+	if channel != "" {
+		branchName = channel
+	}
+
 	platform := c.Query("platform")
 	if platform == "" || (platform != "ios" && platform != "android") {
 		log.Printf("[RequestID: %s] Invalid platform: %s", requestID, platform)

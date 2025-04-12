@@ -53,6 +53,7 @@ func NewRouter() *gin.Engine {
 		// Update routes
 		api.POST("/update/upload/:branch", middleware.AuthMiddleware, handlers.UploadHandler)
 		api.POST("/update/request-upload-url/:branch", middleware.AuthMiddleware, handlers.RequestUploadUrlHandler)
+		api.POST("/update/request-upload-urls/:branch", middleware.AuthMiddleware, handlers.RequestUploadUrlHandler)
 		api.POST("/update/mark-uploaded/:branch", middleware.AuthMiddleware, handlers.MarkUpdateAsUploadedHandler)
 		api.GET("/update/manifest/:branch/:runtimeVersion", handlers.ManifestHandler)
 		api.GET("/update/assets/:path", handlers.AssetsHandler)
