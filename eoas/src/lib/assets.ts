@@ -73,7 +73,9 @@ export function computeFilesRequests(
   projectDir: string,
   requestedPlatform: RequestedPlatform
 ): AssetToUpload[] {
-  const metadata = loadMetadata(path.join(projectDir, 'dist'));
+  const distDir = path.join(projectDir, 'dist');
+  const expoDir = path.join(projectDir, '_expo');
+  const metadata = loadMetadata(distDir);
   const assets: AssetToUpload[] = [
     { path: 'metadata.json', name: 'metadata.json', ext: 'json' },
     { path: 'expoConfig.json', name: 'expoConfig.json', ext: 'json' },
@@ -83,9 +85,19 @@ export function computeFilesRequests(
       continue;
     }
     const bundle = metadata.fileMetadata[platform].bundle;
-    assets.push({ path: bundle, name: path.basename(bundle), ext: 'hbc' });
+    const bundlePath = path.join(expoDir, bundle);
+    if (fs.existsSync(bundlePath)) {
+      assets.push({ path: bundlePath, name: path.basename(bundle), ext: 'hbc' });
+    } else {
+      assets.push({ path: path.join(distDir, bundle), name: path.basename(bundle), ext: 'hbc' });
+    }
     for (const asset of metadata.fileMetadata[platform].assets) {
-      assets.push({ path: asset.path, name: path.basename(asset.path), ext: asset.ext });
+      const assetPath = path.join(expoDir, asset.path);
+      if (fs.existsSync(assetPath)) {
+        assets.push({ path: assetPath, name: path.basename(asset.path), ext: asset.ext });
+      } else {
+        assets.push({ path: path.join(distDir, asset.path), name: path.basename(asset.path), ext: asset.ext });
+      }
     }
   }
   return assets;
