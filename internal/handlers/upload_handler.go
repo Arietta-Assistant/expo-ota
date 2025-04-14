@@ -38,28 +38,24 @@ func UploadHandler(c *gin.Context) {
 		return
 	}
 
-	// Verify Firebase token
+	// Check for Firebase token if present (making verification optional)
 	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		log.Printf("[RequestID: %s] No authorization header provided", requestID)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "No authorization header provided"})
-		return
-	}
+	if authHeader != "" {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		decodedToken, err := auth.VerifyFirebaseToken(token)
+		if err != nil {
+			log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Firebase token"})
+			return
+		}
 
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	decodedToken, err := auth.VerifyFirebaseToken(token)
-	if err != nil {
-		log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Firebase token"})
-		return
+		// Log user access if token is provided
+		log.Printf("[RequestID: %s] User %s (%s) uploading update for branch %s",
+			requestID,
+			decodedToken.UID,
+			decodedToken.Claims["email"],
+			branchName)
 	}
-
-	// Log user access
-	log.Printf("[RequestID: %s] User %s (%s) uploading update for branch %s",
-		requestID,
-		decodedToken.UID,
-		decodedToken.Claims["email"],
-		branchName)
 
 	// Process the upload
 	// ... rest of the upload logic ...
