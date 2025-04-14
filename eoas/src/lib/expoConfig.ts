@@ -3,8 +3,6 @@ import { ExpoConfig, getConfig, getConfigFilePaths } from '@expo/config';
 import spawnAsync from '@expo/spawn-async';
 import fs from 'fs-extra';
 import Joi from 'joi';
-import jscodeshift, { Collection } from 'jscodeshift';
-import path from 'path';
 
 import Log from './log';
 import { isExpoInstalled } from './package';
@@ -133,5 +131,26 @@ export function ensureExpoConfigExists(projectDir: string): void {
     throw new Error(
       'No Expo config found. Please create an app.json or app.config.js in your project directory.'
     );
+  }
+}
+
+export async function createOrModifyExpoConfigAsync(
+  projectDir: string,
+  updates: { updates: any }
+): Promise<void> {
+  const config = await getPrivateExpoConfigAsync(projectDir);
+  config.updates = {
+    ...config.updates,
+    ...updates.updates,
+  };
+  
+  const paths = getConfigFilePaths(projectDir);
+  if (paths.dynamicConfigPath) {
+    // TODO: Implement dynamic config modification
+    throw new Error('Dynamic config modification not implemented yet');
+  } else if (paths.staticConfigPath) {
+    const appJson = JSON.parse(await fs.readFile(paths.staticConfigPath, 'utf8'));
+    appJson.expo.updates = config.updates;
+    await fs.writeFile(paths.staticConfigPath, JSON.stringify(appJson, null, 2));
   }
 }

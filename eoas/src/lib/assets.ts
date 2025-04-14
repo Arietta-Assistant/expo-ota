@@ -77,8 +77,8 @@ export function computeFilesRequests(
   const expoDir = path.join(projectDir, '_expo');
   const metadata = loadMetadata(distDir);
   const assets: AssetToUpload[] = [
-    { path: 'metadata.json', name: 'metadata.json', ext: 'json' },
-    { path: 'expoConfig.json', name: 'expoConfig.json', ext: 'json' },
+    { path: path.join(distDir, 'metadata.json'), name: 'metadata.json', ext: 'json' },
+    { path: path.join(distDir, 'expoConfig.json'), name: 'expoConfig.json', ext: 'json' },
   ];
   for (const platform of Object.keys(metadata.fileMetadata) as Platform[]) {
     if (requestedPlatform !== RequestedPlatform.All && requestedPlatform !== platform) {
@@ -119,7 +119,7 @@ export async function requestUploadUrls({
 }: {
   body: { fileNames: string[] };
   requestUploadUrl: string;
-  auth: ExpoCredentials;
+  auth?: ExpoCredentials;
   runtimeVersion: string;
   platform: string;
   commitHash?: string;
@@ -131,14 +131,13 @@ export async function requestUploadUrls({
     {
       method: 'POST',
       headers: {
-        ...getAuthExpoHeaders(auth),
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ fileNames: body.fileNames.map(f => path.basename(f)) }),
     }
   );
   if (!response.ok) {
-    throw new Error(`Failed to request upload URL`);
+    throw new Error(`Failed to request upload URL: ${await response.text()}`);
   }
   return await response.json();
 }

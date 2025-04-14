@@ -1,19 +1,15 @@
-import { Platform } from '@expo/eas-build-job';
-import spawnAsync from '@expo/spawn-async';
+import { Platform, Env } from '@expo/eas-build-job';
 import { Command, Flags } from '@oclif/core';
 import FormData from 'form-data';
 import fs from 'fs-extra';
 import mime from 'mime';
 import fetch from 'node-fetch';
-import path from 'path';
 
-import { RequestUploadUrlItem, computeFilesRequests, requestUploadUrls } from '../lib/assets';
-import { getAuthExpoHeaders, retrieveExpoCredentials } from '../lib/auth';
+import { computeFilesRequests, requestUploadUrls } from '../lib/assets';
 import {
   RequestedPlatform,
   getExpoConfigUpdateUrl,
   getPrivateExpoConfigAsync,
-  getPublicExpoConfigAsync,
 } from '../lib/expoConfig';
 import Log from '../lib/log';
 import { ora } from '../lib/ora';
@@ -104,20 +100,25 @@ export default class Publish extends Command {
       }
     }
 
-    const runtimeVersion = await resolveRuntimeVersionAsync(projectDir, platform);
-    if (!runtimeVersion) {
+    const workflow = await resolveWorkflowAsync(
+      projectDir,
+      platform === RequestedPlatform.All ? Platform.ANDROID : platform === RequestedPlatform.Android ? Platform.ANDROID : Platform.IOS,
+      vcsClient
+    );
+    const runtimeVersionResult = await resolveRuntimeVersionAsync({
+      exp: privateConfig,
+      platform: platform === RequestedPlatform.All || platform === RequestedPlatform.Android ? 'android' : 'ios',
+      workflow,
+      projectDir,
+      env: process.env as Env,
+    });
+
+    if (!runtimeVersionResult?.runtimeVersion) {
       Log.error('Could not resolve runtime version');
       process.exit(1);
     }
 
-    // Get Firebase token
-    const firebaseToken = process.env.FIREBASE_TOKEN;
-    if (!firebaseToken) {
-      Log.error('FIREBASE_TOKEN environment variable is required');
-      process.exit(1);
-    }
-
-    // Get build number from extra field
+    // Remove Firebase token check
     const buildNumber = privateConfig.extra?.buildNumber;
     if (!buildNumber) {
       Log.error('Build number is required in app.config.js extra field');
@@ -127,34 +128,34 @@ export default class Publish extends Command {
     const spinner = ora('Publishing update').start();
     try {
       const files = await computeFilesRequests(projectDir, platform);
-      const uploadUrls = await requestUploadUrls(baseUrl, files, {
-        branch,
-        runtimeVersion,
-        platform,
+      const uploadUrls = await requestUploadUrls({
+        body: { fileNames: files.map(f => f.name) },
+        requestUploadUrl: `${baseUrl}/update/request-upload-urls/${branch}`,
+        runtimeVersion: runtimeVersionResult.runtimeVersion,
+        platform: platform === RequestedPlatform.All ? 'all' : platform.toString().toLowerCase(),
         commitHash,
-        buildNumber,
-        firebaseToken,
       });
 
       for (const file of files) {
-        const uploadUrl = uploadUrls.find(url => url.fileName === file.path);
+        const uploadUrl = uploadUrls.uploadRequests.find(url => url.fileName === file.name);
         if (!uploadUrl) {
-          throw new Error(`No upload URL found for file ${file.path}`);
+          throw new Error(`No upload URL found for file ${file.name}`);
         }
 
         const form = new FormData();
         form.append('file', fs.createReadStream(file.path), {
           contentType: mime.getType(file.path) || 'application/octet-stream',
-          filename: path.basename(file.path),
+          filename: file.name,
         });
 
-        await fetch(uploadUrl.url, {
+        const response = await fetch(uploadUrl.requestUploadUrl, {
           method: 'PUT',
           body: form,
-          headers: {
-            Authorization: `Bearer ${firebaseToken}`,
-          },
         });
+
+        if (!response.ok) {
+          throw new Error(`Failed to upload file ${file.name}: ${await response.text()}`);
+        }
       }
 
       spinner.succeed('Update published successfully');
