@@ -119,9 +119,9 @@ export default class Publish extends Command {
     }
 
     // Remove Firebase token check
-    const buildNumber = privateConfig.extra?.buildNumber;
+    const buildNumber = privateConfig.extra?.buildNumber || privateConfig.extra?.updateCode;
     if (!buildNumber) {
-      Log.error('Build number is required in app.config.js extra field');
+      Log.error('Build number or update code is required in app.config.js extra field');
       process.exit(1);
     }
 
@@ -129,8 +129,11 @@ export default class Publish extends Command {
     try {
       const files = await computeFilesRequests(projectDir, platform);
       const uploadUrls = await requestUploadUrls({
-        body: { fileNames: files.map(f => f.name) },
-        requestUploadUrl: `${baseUrl}/update/request-upload-urls/${branch}`,
+        body: { 
+          fileNames: files.map(f => f.name),
+          branch: branch
+        },
+        requestUploadUrl: `${baseUrl}/update/request-upload-urls`,
         runtimeVersion: runtimeVersionResult.runtimeVersion,
         platform: platform === RequestedPlatform.All ? 'all' : platform.toString().toLowerCase(),
         commitHash,
