@@ -124,15 +124,23 @@ export async function requestUploadUrls({
   platform: string;
   commitHash?: string;
 }): Promise<{ uploadRequests: RequestUploadUrlItem[]; updateId: string }> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Only add auth headers if auth is provided
+  if (auth) {
+    const authHeaders = getAuthExpoHeaders(auth);
+    Object.assign(headers, authHeaders);
+  }
+
   const response = await fetch(
     `${requestUploadUrl}?runtimeVersion=${runtimeVersion}&platform=${platform}&commitHash=${
       commitHash || ''
     }`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ fileNames: body.fileNames.map(f => path.basename(f)) }),
     }
   );

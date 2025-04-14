@@ -134,6 +134,7 @@ export default class Publish extends Command {
         runtimeVersion: runtimeVersionResult.runtimeVersion,
         platform: platform === RequestedPlatform.All ? 'all' : platform.toString().toLowerCase(),
         commitHash,
+        auth: undefined,
       });
 
       for (const file of files) {
