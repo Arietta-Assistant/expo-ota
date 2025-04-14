@@ -109,9 +109,22 @@ func (b *FirebaseBucket) RequestUploadUrlsForFileUpdates(branch string, runtimeV
 
 	for _, fileName := range fileNames {
 		objectPath := path.Join("updates", branch, runtimeVersion, updateId, fileName)
+
+		// Determine content type based on file extension
+		contentType := "application/octet-stream"
+		if strings.HasSuffix(fileName, ".json") {
+			contentType = "application/json"
+		} else if strings.HasSuffix(fileName, ".js") {
+			contentType = "application/javascript"
+		} else if strings.HasSuffix(fileName, ".png") {
+			contentType = "image/png"
+		} else if strings.HasSuffix(fileName, ".jpg") || strings.HasSuffix(fileName, ".jpeg") {
+			contentType = "image/jpeg"
+		}
+
 		opts := &storage.SignedURLOptions{
 			Method:  "PUT",
-			Headers: []string{"Content-Type: application/octet-stream"},
+			Headers: []string{fmt.Sprintf("Content-Type: %s", contentType)},
 			Expires: time.Now().Add(15 * time.Minute),
 		}
 		url, err := b.bucket.SignedURL(objectPath, opts)

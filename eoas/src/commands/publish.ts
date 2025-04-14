@@ -1,9 +1,9 @@
 import { Platform, Env } from '@expo/eas-build-job';
 import { Command, Flags } from '@oclif/core';
-import FormData from 'form-data';
 import fs from 'fs-extra';
+import https from 'https';
 import mime from 'mime';
-import fetch from 'node-fetch';
+import url from 'url';
 
 import { computeFilesRequests, requestUploadUrls } from '../lib/assets';
 import {
@@ -132,7 +132,7 @@ export default class Publish extends Command {
         body: { 
           fileNames: files.map(f => f.name)
         },
-        requestUploadUrl: `${baseUrl}/update/request-upload-urls/${branch}`,
+        requestUploadUrl: `${baseUrl}/api/update/request-upload-urls/${branch}`,
         runtimeVersion: runtimeVersionResult.runtimeVersion,
         platform: platform === RequestedPlatform.All ? 'all' : platform.toString().toLowerCase(),
         commitHash,
@@ -145,19 +145,50 @@ export default class Publish extends Command {
           throw new Error(`No upload URL found for file ${file.name}`);
         }
 
-        const form = new FormData();
-        form.append('file', fs.createReadStream(file.path), {
-          contentType: mime.getType(file.path) || 'application/octet-stream',
-          filename: file.name,
-        });
-
-        const response = await fetch(uploadUrl.requestUploadUrl, {
-          method: 'PUT',
-          body: form,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to upload file ${file.name}: ${await response.text()}`);
+        // Read the file content
+        const fileContent = await fs.readFile(file.path);
+        const contentType = mime.getType(file.path) || 'application/octet-stream';
+        
+        try {
+          // Use the raw https module for better control over the request
+          await new Promise<void>((resolve, reject) => {
+            const parsedUrl = new url.URL(uploadUrl.requestUploadUrl);
+            
+            const options = {
+              hostname: parsedUrl.hostname,
+              path: parsedUrl.pathname + parsedUrl.search,
+              method: 'PUT',
+              headers: {
+                'Content-Type': contentType,
+                'Content-Length': fileContent.length
+              }
+            };
+            
+            const req = https.request(options, (res) => {
+              let responseBody = '';
+              
+              res.on('data', (chunk) => {
+                responseBody += chunk;
+              });
+              
+              res.on('end', () => {
+                if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                  resolve();
+                } else {
+                  reject(new Error(`Failed to upload file ${file.name}: ${responseBody}`));
+                }
+              });
+            });
+            
+            req.on('error', (err) => {
+              reject(new Error(`Network error while uploading ${file.name}: ${err.message}`));
+            });
+            
+            req.write(fileContent);
+            req.end();
+          });
+        } catch (error) {
+          throw error;
         }
       }
 
