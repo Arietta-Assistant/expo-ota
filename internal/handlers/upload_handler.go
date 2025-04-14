@@ -68,21 +68,18 @@ func UploadHandler(c *gin.Context) {
 func RequestUploadLocalFileHandler(w http.ResponseWriter, r *http.Request) {
 	requestID := uuid.New().String()
 
-	// Verify Firebase token
+	// Check for Firebase token if present (making verification optional)
 	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		log.Printf("[RequestID: %s] No authorization header provided", requestID)
-		http.Error(w, "No authorization header provided", http.StatusUnauthorized)
-		return
+	if authHeader != "" {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		tokenInfo, err := auth.VerifyFirebaseToken(token)
+		if err != nil || tokenInfo == nil {
+			log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
+			http.Error(w, "Invalid Firebase token", http.StatusUnauthorized)
+			return
+		}
 	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	tokenInfo, err := auth.VerifyFirebaseToken(token)
-	if err != nil || tokenInfo == nil {
-		log.Printf("[RequestID: %s] Invalid Firebase token: %v", requestID, err)
-		http.Error(w, "Invalid Firebase token", http.StatusUnauthorized)
-		return
-	}
+	// No token verification needed if no auth header provided - similar to RequestUploadUrlHandler
 
 	// Check if we're using a local bucket
 	bucketType := config.GetEnv("BUCKET_TYPE")
@@ -258,12 +255,7 @@ func RequestUploadUrlHandler(c *gin.Context) {
 	}
 
 	// Get the bucket
-	bucketType := config.GetEnv("BUCKET_TYPE")
-	if bucketType != string(bucket.FirebaseBucketType) {
-		log.Printf("[RequestID: %s] Invalid bucket type: %s", requestID, bucketType)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid bucket type"})
-		return
-	}
+	// Let's use any bucket type
 
 	// Generate update ID
 	updateId := uuid.New().String()
