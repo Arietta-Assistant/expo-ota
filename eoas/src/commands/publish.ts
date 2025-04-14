@@ -130,10 +130,9 @@ export default class Publish extends Command {
       const files = await computeFilesRequests(projectDir, platform);
       const uploadUrls = await requestUploadUrls({
         body: { 
-          fileNames: files.map(f => f.name),
-          branch: branch
+          fileNames: files.map(f => f.name)
         },
-        requestUploadUrl: `${baseUrl}/update/request-upload-urls`,
+        requestUploadUrl: `${baseUrl}/update/request-upload-urls/${branch}`,
         runtimeVersion: runtimeVersionResult.runtimeVersion,
         platform: platform === RequestedPlatform.All ? 'all' : platform.toString().toLowerCase(),
         commitHash,

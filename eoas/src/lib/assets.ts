@@ -117,7 +117,7 @@ export async function requestUploadUrls({
   platform,
   commitHash,
 }: {
-  body: { fileNames: string[]; branch: string };
+  body: { fileNames: string[] };
   requestUploadUrl: string;
   auth?: ExpoCredentials;
   runtimeVersion: string;
