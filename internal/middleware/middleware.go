@@ -16,21 +16,17 @@ func LoggingMiddleware(c *gin.Context) {
 
 func AuthMiddleware(c *gin.Context) {
 	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "No authorization header provided"})
-		c.Abort()
-		return
-	}
+	if authHeader != "" {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		decodedToken, err := auth.VerifyFirebaseToken(token)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Firebase token"})
+			c.Abort()
+			return
+		}
 
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	decodedToken, err := auth.VerifyFirebaseToken(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Firebase token"})
-		c.Abort()
-		return
+		// Add user info to context if token is provided
+		c.Set("user", decodedToken)
 	}
-
-	// Add user info to context
-	c.Set("user", decodedToken)
 	c.Next()
 }
