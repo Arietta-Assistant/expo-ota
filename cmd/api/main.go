@@ -16,7 +16,8 @@ func init() {
 }
 
 func main() {
-	router := infrastructure.NewRouter()
+	// Create a new Gin engine
+	router := gin.Default()
 
 	// Add CORS middleware
 	router.Use(func(c *gin.Context) {
@@ -32,6 +33,9 @@ func main() {
 
 		c.Next()
 	})
+
+	// Setup routes using the router package
+	infrastructure.SetupRoutes(router)
 
 	log.Println("Server is running on port 8080")
 	if err := router.Run(":8080"); err != nil {
