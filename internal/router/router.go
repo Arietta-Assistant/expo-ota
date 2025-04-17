@@ -7,6 +7,7 @@ import (
 	"expo-open-ota/internal/handlers"
 	"expo-open-ota/internal/metrics"
 	"expo-open-ota/internal/middleware"
+	"expo-open-ota/internal/update"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,25 +20,111 @@ import (
 )
 
 func getDashboardPath() string {
-	exePath, err := os.Executable()
+	// Simple implementation that should work in most environments
+	workingDir, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("Error getting executable path: %v", err)
+		log.Printf("Error getting working directory: %v", err)
+		return "/app/dashboard/dist" // Railway default path
 	}
-	exeDir := filepath.Dir(exePath)
 
-	if strings.Contains(exePath, "/var/folders/") || strings.Contains(exePath, "Temp") {
-		workingDir, _ := os.Getwd()
-		return filepath.Join(workingDir, "dashboard", "dist")
+	// For Railway and production environments
+	if _, err := os.Stat("/app/dashboard/dist"); err == nil {
+		return "/app/dashboard/dist"
 	}
-	return filepath.Join(exeDir, "dashboard", "dist")
+
+	// For local development
+	return filepath.Join(workingDir, "dashboard", "dist")
 }
 
 func NewRouter() *gin.Engine {
 	router := gin.Default()
 	router.Use(middleware.LoggingMiddleware)
 
+	// Add request logging middleware
+	router.Use(func(c *gin.Context) {
+		log.Printf("DEBUG: Incoming request: %s %s, Params: %v, Headers: %v",
+			c.Request.Method,
+			c.Request.URL.Path,
+			c.Params,
+			c.Request.Header)
+		c.Next()
+	})
+
 	// Health check
 	router.GET("/health", handlers.HealthHandler)
+
+	// Debug endpoint to dump metadata for a specific update
+	router.GET("/debug/metadata/:updateId", func(c *gin.Context) {
+		updateId := c.Param("updateId")
+		log.Printf("Manual request to dump metadata for update: %s", updateId)
+
+		// Try direct access method first (more reliable)
+		resolvedBucket := bucket.GetBucket()
+		if firebaseBucket, ok := resolvedBucket.(*bucket.FirebaseBucket); ok {
+			log.Printf("Using direct method to access metadata")
+			// Call the method to log the metadata
+			firebaseBucket.GetDirectMetadata(updateId)
+
+			// Return a simple success message
+			c.JSON(http.StatusOK, gin.H{
+				"message":  "Metadata dump has been written to the logs",
+				"updateId": updateId,
+			})
+			return
+		}
+
+		// Try to find the update in all branches and runtime versions
+		branches, err := resolvedBucket.GetBranches()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error getting branches: %v", err)})
+			return
+		}
+
+		for _, branch := range branches {
+			runtimeVersions, err := resolvedBucket.GetRuntimeVersions(branch)
+			if err != nil {
+				continue
+			}
+
+			for _, rv := range runtimeVersions {
+				updates, err := resolvedBucket.GetUpdates(branch, rv.RuntimeVersion)
+				if err != nil {
+					continue
+				}
+
+				for _, u := range updates {
+					if u.UpdateId == updateId {
+						// Found the update - dump its metadata
+						metadata, err := update.GetMetadata(u)
+						if err != nil {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error getting metadata: %v", err)})
+							return
+						}
+
+						// Return the metadata as JSON
+						c.JSON(http.StatusOK, gin.H{
+							"updateId":       updateId,
+							"branch":         branch,
+							"runtimeVersion": rv.RuntimeVersion,
+							"metadata":       metadata,
+							"extra":          metadata.MetadataJSON.Extra,
+						})
+						return
+					}
+				}
+			}
+		}
+
+		// If we reach here, we didn't find the update
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Update with ID %s not found", updateId)})
+	})
+
+	// Debug endpoint to manually trigger the dump function
+	router.GET("/debug/dump-metadata", func(c *gin.Context) {
+		log.Println("Manually triggering metadata dump...")
+		go update.DumpSpecificUpdateMetadata()
+		c.JSON(http.StatusOK, gin.H{"message": "Dump process started, check logs for results"})
+	})
 
 	// Metrics
 	router.GET("/metrics", func(c *gin.Context) {
@@ -144,9 +231,23 @@ func NewRouter() *gin.Engine {
 	dashboardPath := getDashboardPath()
 
 	if dashboard.IsDashboardEnabled() {
+		// Simple debug route
+		router.GET("/dashboard-debug", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"path": getDashboardPath(),
+			})
+		})
+
+		// Redirect /dashboard/dist/ to /dashboard/
+		router.GET("/dashboard/dist/*any", func(c *gin.Context) {
+			c.Redirect(http.StatusMovedPermanently, "/dashboard/")
+		})
+
 		router.GET("/dashboard/*path", func(c *gin.Context) {
-			// Get env.js
-			if c.Param("path") == "/env.js" {
+			pathParam := c.Param("path")
+
+			// Handle env.js
+			if pathParam == "/env.js" {
 				c.Header("Content-Type", "application/javascript")
 				baseURL := config.GetEnv("BASE_URL")
 				if baseURL == "" {
@@ -155,28 +256,40 @@ func NewRouter() *gin.Engine {
 				c.String(200, fmt.Sprintf("window.env = { VITE_OTA_API_URL: '%s' };", baseURL))
 				return
 			}
-			if c.Param("path") == "/" {
-				target := "/dashboard/"
-				if c.Request.URL.RawQuery != "" {
-					target += "?" + c.Request.URL.RawQuery
-				}
-				c.Redirect(301, target)
+
+			// Try to serve the file directly
+			filePath := filepath.Join(dashboardPath, strings.TrimPrefix(pathParam, "/"))
+			if fileExists(filePath) {
+				c.File(filePath)
 				return
 			}
-			staticExtensions := []string{".css", ".js", ".svg", ".png", ".json", ".ico"}
-			for _, ext := range staticExtensions {
-				if len(c.Param("path")) > len(ext) && c.Param("path")[len(c.Param("path"))-len(ext):] == ext {
-					filePath := filepath.Join(dashboardPath, c.Param("path")[len("/dashboard/"):])
-					fmt.Println("Serving file", filePath)
-					c.File(filePath)
-					return
-				}
-			}
-			filePath := filepath.Join(dashboardPath, "index.html")
-			fmt.Println("Serving file", filePath)
-			c.File(filePath)
+
+			// If not found or root path, serve index.html
+			c.File(filepath.Join(dashboardPath, "index.html"))
 		})
 	}
 
 	return router
+}
+
+// Helper functions for dashboard
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func getWorkingDir() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return dir
+}
+
+func getExecutablePath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return exe
 }

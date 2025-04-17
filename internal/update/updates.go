@@ -10,6 +10,7 @@ import (
 	"expo-open-ota/internal/types"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/url"
 	"sort"
@@ -30,8 +31,23 @@ func GetAllUpdatesForRuntimeVersion(branch string, runtimeVersion string) ([]typ
 	resolvedBucket := bucket.GetBucket()
 	updates, errGetUpdates := resolvedBucket.GetUpdates(branch, runtimeVersion)
 	if errGetUpdates != nil {
+		if strings.Contains(errGetUpdates.Error(), "no more items in iterator") {
+			// This is not a real error, just an empty result
+			log.Printf("No updates found for branch %s and runtime version %s (iterator empty)",
+				branch, runtimeVersion)
+			return []types.Update{}, nil
+		}
 		return nil, errGetUpdates
 	}
+
+	if len(updates) == 0 {
+		log.Printf("No updates found for branch %s and runtime version %s",
+			branch, runtimeVersion)
+	} else {
+		log.Printf("Found %d updates for branch %s and runtime version %s",
+			len(updates), branch, runtimeVersion)
+	}
+
 	updates = sortUpdates(updates)
 	return updates, nil
 }
@@ -154,37 +170,103 @@ func AreUpdatesIdentical(update1, update2 types.Update, platform string) (bool, 
 	return true, nil
 }
 
-func GetLatestUpdateBundlePathForRuntimeVersion(branch string, runtimeVersion string) (*types.Update, error) {
+func GetLatestUpdateBundlePathForRuntimeVersion(branch string, runtimeVersion string, buildNumber string) (*types.Update, error) {
 	cache := cache2.GetCache()
 	cacheKey := fmt.Sprintf(ComputeLastUpdateCacheKey(branch, runtimeVersion))
+	if buildNumber != "" {
+		cacheKey = fmt.Sprintf("%s:%s", cacheKey, buildNumber)
+	}
+
+	log.Printf("Searching for updates in branch=%s, runtimeVersion=%s, buildNumber=%s", branch, runtimeVersion, buildNumber)
+	log.Printf("Looking for specific update ID starting with build-7-")
+
 	if cachedValue := cache.Get(cacheKey); cachedValue != "" {
 		var update types.Update
 		err := json.Unmarshal([]byte(cachedValue), &update)
 		if err != nil {
+			log.Printf("Error parsing cached update: %v", err)
 			return nil, err
 		}
+		log.Printf("USING CACHED UPDATE: %s", update.UpdateId)
 		return &update, nil
 	}
+
+	log.Printf("No cached update found, getting all updates for %s/%s", branch, runtimeVersion)
 	updates, err := GetAllUpdatesForRuntimeVersion(branch, runtimeVersion)
 	if err != nil {
+		log.Printf("Error getting updates: %v", err)
 		return nil, err
 	}
+	log.Printf("Found %d updates (before validation)", len(updates))
+
+	// Debug - print all updates
+	for i, update := range updates {
+		log.Printf("Update #%d: ID=%s, CreatedAt=%v", i+1, update.UpdateId, update.CreatedAt)
+	}
+
 	filteredUpdates := make([]types.Update, 0)
 	for _, update := range updates {
+		// Specifically check for build-7 update
+		if strings.HasPrefix(update.UpdateId, "build-7-") {
+			log.Printf("FOUND TARGET UPDATE: %s", update.UpdateId)
+		}
+
 		if IsUpdateValid(update) {
 			filteredUpdates = append(filteredUpdates, update)
+			log.Printf("VALID UPDATE: %s", update.UpdateId)
+		} else {
+			log.Printf("INVALID UPDATE: %s", update.UpdateId)
 		}
 	}
-	if len(filteredUpdates) > 0 {
-		cacheValue, err := json.Marshal(filteredUpdates[0])
-		if err != nil {
-			return &filteredUpdates[0], nil
-		}
-		ttl := 1800
-		err = cache.Set(cacheKey, string(cacheValue), &ttl)
-		return &filteredUpdates[0], nil
+
+	// If no updates found, return nil
+	if len(filteredUpdates) == 0 {
+		log.Printf("No valid updates found for %s/%s", branch, runtimeVersion)
+		return nil, nil
 	}
-	return nil, nil
+
+	log.Printf("Found %d valid updates", len(filteredUpdates))
+
+	// Just return the latest update (first in the sorted list)
+	latest := &filteredUpdates[0]
+	log.Printf("SELECTED UPDATE: %s", latest.UpdateId)
+
+	cacheValue, _ := json.Marshal(*latest)
+	ttl := 1800
+	_ = cache.Set(cacheKey, string(cacheValue), &ttl)
+	return latest, nil
+}
+
+// extractBuildNumber extracts build number from a string like "build-NUMBER-updateid" or just "12"
+// Returns the build number as an integer, or -1 if not found
+func extractBuildNumber(str string) int {
+	// First check if it's a direct number
+	num, err := strconv.Atoi(str)
+	if err == nil {
+		return num
+	}
+
+	// Check for "build-NUMBER" format
+	if strings.HasPrefix(str, "build-") {
+		parts := strings.SplitN(strings.TrimPrefix(str, "build-"), "-", 2)
+		if len(parts) > 0 {
+			num, err := strconv.Atoi(parts[0])
+			if err == nil {
+				return num
+			}
+		}
+	}
+
+	// Check for any number at the beginning of the string
+	parts := strings.Split(str, "-")
+	for _, part := range parts {
+		num, err := strconv.Atoi(part)
+		if err == nil {
+			return num
+		}
+	}
+
+	return -1
 }
 
 func GetUpdateType(update types.Update) types.UpdateType {
@@ -230,13 +312,34 @@ func GetMetadata(update types.Update) (types.UpdateMetadata, error) {
 	}
 	defer file.Close()
 
+	// Read the raw content for debugging
+	rawContent, err := io.ReadAll(file)
+	if err != nil {
+		return types.UpdateMetadata{}, err
+	}
+
+	// Log the raw metadata JSON
+	log.Printf("DEBUG: Raw metadata for update %s/%s/%s: %s",
+		update.Branch, update.RuntimeVersion, update.UpdateId, string(rawContent))
+
+	// Reset reader
+	file, errFile = resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, "metadata.json")
+	if errFile != nil {
+		return types.UpdateMetadata{}, errFile
+	}
+	defer file.Close()
+
 	var metadata types.UpdateMetadata
 	var metadataJson types.MetadataObject
-	err := json.NewDecoder(file).Decode(&metadataJson)
+	err = json.NewDecoder(file).Decode(&metadataJson)
 	if err != nil {
 		fmt.Println("error decoding metadata json:", err)
 		return types.UpdateMetadata{}, err
 	}
+
+	// Debug log the structure
+	extraData, _ := json.MarshalIndent(metadataJson.Extra, "", "  ")
+	log.Printf("DEBUG: Extra fields in metadata: %s", string(extraData))
 
 	metadata.CreatedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	metadata.MetadataJSON = metadataJson
@@ -484,9 +587,9 @@ func CreateUpdate(update types.Update) error {
 			},
 		},
 		Extra: map[string]interface{}{
-			"commitHash":  update.CommitHash,
-			"buildNumber": update.BuildNumber,
-			"platform":    update.Platform,
+			"commitHash": update.CommitHash,
+			"updateCode": update.BuildNumber,
+			"platform":   update.Platform,
 		},
 	}
 
@@ -497,4 +600,98 @@ func CreateUpdate(update types.Update) error {
 
 	reader := strings.NewReader(string(metadataBytes))
 	return resolvedBucket.UploadFileIntoUpdate(update, "metadata.json", reader)
+}
+
+// DumpSpecificUpdateMetadata dumps the complete metadata for the specific update ID
+func DumpSpecificUpdateMetadata() {
+	specificUpdateId := "95dd7166-1c74-4251-ae37-5fab5eafa74c"
+	log.Printf("Attempting to dump complete metadata for update ID: %s", specificUpdateId)
+
+	// First try with the direct method that doesn't rely on branch discovery
+	resolvedBucket := bucket.GetBucket()
+
+	// Use type assertion to check if the bucket is a FirebaseBucket
+	if firebaseBucket, ok := resolvedBucket.(*bucket.FirebaseBucket); ok {
+		log.Printf("Using direct Firebase bucket access method")
+		firebaseBucket.GetDirectMetadata(specificUpdateId)
+		return
+	}
+
+	log.Printf("Bucket does not support direct access, falling back to branch discovery method")
+
+	// Fallback to the original method if the bucket doesn't support direct access
+	// Get all branches
+	branches, err := resolvedBucket.GetBranches()
+	if err != nil {
+		log.Printf("Error getting branches: %v", err)
+		log.Printf("Consider checking Firebase credentials and permissions")
+		return
+	}
+
+	log.Printf("Checking for update %s in branches: %v", specificUpdateId, branches)
+
+	for _, branch := range branches {
+		// Get runtime versions for each branch
+		runtimeVersions, err := resolvedBucket.GetRuntimeVersions(branch)
+		if err != nil {
+			log.Printf("Error getting runtime versions for branch %s: %v", branch, err)
+			continue
+		}
+
+		log.Printf("Checking branch %s with runtime versions: %v", branch, runtimeVersions)
+
+		for _, rv := range runtimeVersions {
+			// Get updates for this branch and runtime version
+			updates, err := resolvedBucket.GetUpdates(branch, rv.RuntimeVersion)
+			if err != nil {
+				log.Printf("Error getting updates for %s/%s: %v", branch, rv.RuntimeVersion, err)
+				continue
+			}
+
+			// Check if our specific update ID is in the list
+			for _, update := range updates {
+				if update.UpdateId == specificUpdateId {
+					log.Printf("Found update %s in branch %s, runtime version %s", specificUpdateId, branch, rv.RuntimeVersion)
+
+					// Get and dump the metadata
+					metadata, err := GetMetadata(update)
+					if err != nil {
+						log.Printf("Error getting metadata: %v", err)
+						return
+					}
+
+					// Marshal the metadata to pretty JSON
+					jsonData, err := json.MarshalIndent(metadata, "", "  ")
+					if err != nil {
+						log.Printf("Error marshalling metadata: %v", err)
+						return
+					}
+
+					log.Printf("Complete metadata for update %s:\n%s", specificUpdateId, string(jsonData))
+
+					// Also dump the MetadataJSON field which has the actual content
+					jsonData2, err := json.MarshalIndent(metadata.MetadataJSON, "", "  ")
+					if err != nil {
+						log.Printf("Error marshalling metadata.MetadataJSON: %v", err)
+						return
+					}
+
+					log.Printf("MetadataJSON for update %s:\n%s", specificUpdateId, string(jsonData2))
+
+					// Dump Extra field specifically
+					jsonData3, err := json.MarshalIndent(metadata.MetadataJSON.Extra, "", "  ")
+					if err != nil {
+						log.Printf("Error marshalling metadata.MetadataJSON.Extra: %v", err)
+						return
+					}
+
+					log.Printf("Extra fields for update %s:\n%s", specificUpdateId, string(jsonData3))
+
+					return
+				}
+			}
+		}
+	}
+
+	log.Printf("Could not find update %s in any branch or runtime version", specificUpdateId)
 }

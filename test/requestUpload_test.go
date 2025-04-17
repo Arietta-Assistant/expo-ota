@@ -19,6 +19,7 @@ import (
 	"expo-open-ota/internal/handlers"
 	"expo-open-ota/internal/services"
 	"expo-open-ota/internal/update"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
@@ -366,7 +367,7 @@ func TestRequestUploadUrlWithSampleUpdate(t *testing.T) {
 			assert.Nil(t, err, "Expected no errors when opening uploaded file")
 		}
 	}
-	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion("DO_NOT_USE", "1")
+	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion("DO_NOT_USE", "1", "")
 	if err != nil {
 		t.Fatalf("Error getting latest update: %v", err)
 	}
@@ -378,7 +379,7 @@ func TestRequestUploadUrlWithSampleUpdate(t *testing.T) {
 	rMark = mux.SetURLVars(rMark, map[string]string{"BRANCH": "DO_NOT_USE"})
 	handlers.MarkUpdateAsUploadedHandler(wMark, rMark)
 	assert.Equal(t, 200, wMark.Code, "Expected status code 200")
-	lastUpdate, err = update.GetLatestUpdateBundlePathForRuntimeVersion("DO_NOT_USE", "1")
+	lastUpdate, err = update.GetLatestUpdateBundlePathForRuntimeVersion("DO_NOT_USE", "1", "")
 	if err != nil {
 		t.Fatalf("Error getting latest update: %v", err)
 	}
@@ -504,7 +505,7 @@ func TestIdenticalUpload(t *testing.T) {
 	if w2.Code == 200 {
 		t.Fatalf("Second mark as uploaded should have failed (non-200), got %d", w2.Code)
 	}
-	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion)
+	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion, "")
 	if err != nil {
 		t.Fatalf("Error getting latest update: %v", err)
 	}
@@ -532,7 +533,7 @@ func TestDifferentUpload(t *testing.T) {
 	updateId2 := performUpload(t, projectRoot, branch, runtimeVersion, sampleOtherUpdatePath)
 	w2 := markUpdateAsUploaded(t, branch, runtimeVersion, updateId2)
 	assert.Equal(t, 200, w2.Code, "Expected status code 200")
-	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion)
+	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion, "")
 	if err != nil {
 		t.Fatalf("Error getting latest update: %v", err)
 	}

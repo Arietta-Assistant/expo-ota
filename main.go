@@ -3,7 +3,9 @@ package main
 import (
 	"expo-open-ota/config"
 	infrastructure "expo-open-ota/internal/router"
+	"expo-open-ota/internal/update"
 	"log"
+	"time"
 )
 
 func main() {
@@ -12,6 +14,15 @@ func main() {
 
 	// Initialize router
 	router := infrastructure.NewRouter()
+
+	// Dump metadata for the specific update
+	go func() {
+		// Wait a bit to make sure everything is initialized
+		time.Sleep(2 * time.Second)
+		log.Println("Starting metadata dump for specific update...")
+		update.DumpSpecificUpdateMetadata()
+		log.Println("Metadata dump complete")
+	}()
 
 	// Get port from environment or use default
 	port := config.GetEnv("PORT")

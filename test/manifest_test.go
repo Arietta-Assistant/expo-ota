@@ -7,13 +7,14 @@ import (
 	"expo-open-ota/internal/handlers"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
-	"github.com/jarcoal/httpmock"
-	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/jarcoal/httpmock"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNotValidChannelForManifest(t *testing.T) {
@@ -273,7 +274,7 @@ func TestSkippingNotValidUpdatesAndCache(t *testing.T) {
 
 			return httpmock.NewStringResponse(404, "Unknown operation"), nil
 		})
-	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion("branch-4", "1")
+	lastUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion("branch-4", "1", "")
 	if err != nil {
 		t.Errorf("Error getting latest update: %v", err)
 	}

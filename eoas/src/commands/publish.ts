@@ -25,6 +25,8 @@ export default class Publish extends Command {
 
   static override description = 'Publish an update to your self-hosted server';
 
+  static override examples = ['<%= config.bin %> <%= command.id %>'];
+
   static override flags = {
     platform: Flags.string({
       char: 'p',
@@ -44,11 +46,41 @@ export default class Publish extends Command {
       char: 'c',
       description: 'Channel to publish to',
     }),
+    'runtime-version': Flags.string({
+      char: 'r',
+      description: 'Runtime version to publish for',
+      required: true,
+    }),
+    message: Flags.string({
+      char: 'm',
+      description: 'Update message',
+    }),
+    'local-project': Flags.string({
+      description: 'Directory containing update source files',
+      required: true,
+      default: '.',
+    }),
+    'launch-jsurl': Flags.string({
+      description: 'URL to launch the update from',
+    }),
+    'build-number': Flags.string({
+      description: 'Build number to include in the update ID',
+    }),
   };
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(Publish);
-    const { platform, nonInteractive, branch, channel } = this.sanitizeFlags(flags);
+    const {
+      platform,
+      nonInteractive,
+      branch,
+      channel,
+      'runtime-version': _runtimeVersion,
+      message: _message,
+      'local-project': _expoLocalProject,
+      'launch-jsurl': _launchJsUrl,
+      'build-number': _buildNumber,
+    } = this.sanitizeFlags(flags);
     if (!branch) {
       Log.error('Branch name is required');
       process.exit(1);
@@ -119,8 +151,8 @@ export default class Publish extends Command {
     }
 
     // Remove Firebase token check
-    const buildNumber = privateConfig.extra?.buildNumber || privateConfig.extra?.updateCode;
-    if (!buildNumber) {
+    const appBuildNumber = privateConfig.extra?.buildNumber || privateConfig.extra?.updateCode;
+    if (!appBuildNumber) {
       Log.error('Build number or update code is required in app.config.js extra field');
       process.exit(1);
     }
@@ -128,19 +160,18 @@ export default class Publish extends Command {
     const spinner = ora('Publishing update').start();
     try {
       const files = await computeFilesRequests(projectDir, platform);
-      const uploadUrls = await requestUploadUrls({
-        body: { 
-          fileNames: files.map(f => f.name)
-        },
+      const result = await requestUploadUrls({
+        body: { fileNames: files.map(f => f.name) },
         requestUploadUrl: `${baseUrl}/api/update/request-upload-urls/${branch}`,
         runtimeVersion: runtimeVersionResult.runtimeVersion,
         platform: platform === RequestedPlatform.All ? 'all' : platform.toString().toLowerCase(),
         commitHash,
-        auth: undefined,
+        buildNumber: _buildNumber || appBuildNumber,
       });
+      const { uploadRequests } = result;
 
       for (const file of files) {
-        const uploadUrl = uploadUrls.uploadRequests.find(url => url.fileName === file.name);
+        const uploadUrl = uploadRequests.find(url => url.fileName === file.name);
         if (!uploadUrl) {
           throw new Error(`No upload URL found for file ${file.name}`);
         }
@@ -205,17 +236,44 @@ export default class Publish extends Command {
     nonInteractive?: boolean;
     branch?: string;
     channel?: string;
+    'runtime-version'?: string;
+    message?: string;
+    'local-project'?: string;
+    'launch-jsurl'?: string;
+    'build-number'?: string;
   }): {
     platform: RequestedPlatform;
     nonInteractive: boolean;
     branch?: string;
     channel?: string;
+    'runtime-version'?: string;
+    message?: string;
+    'local-project': string;
+    'launch-jsurl'?: string;
+    'build-number'?: string;
   } {
     return {
-      platform: (flags.platform as RequestedPlatform) || RequestedPlatform.All,
-      nonInteractive: flags.nonInteractive || false,
+      platform: this.parsePlatform(flags.platform),
+      nonInteractive: Boolean(flags.nonInteractive),
       branch: flags.branch,
       channel: flags.channel,
+      'runtime-version': flags['runtime-version'],
+      message: flags.message,
+      'local-project': flags['local-project'] || '.',
+      'launch-jsurl': flags['launch-jsurl'],
+      'build-number': flags['build-number'],
     };
+  }
+
+  private parsePlatform(platform?: string): RequestedPlatform {
+    if (platform === 'all') {
+      return RequestedPlatform.All;
+    } else if (platform === 'android') {
+      return RequestedPlatform.Android;
+    } else if (platform === 'ios') {
+      return RequestedPlatform.Ios;
+    } else {
+      throw new Error('Invalid platform');
+    }
   }
 }

@@ -137,7 +137,7 @@ func RequestUploadLocalFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Now we have to retrieve the latest update and compare hash changes
-	latestUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branchName, runtimeVersion)
+	latestUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branchName, runtimeVersion, buildNumber)
 	if err != nil || latestUpdate == nil {
 		err = update.MarkUpdateAsChecked(*currentUpdate)
 		if err != nil {
@@ -223,6 +223,8 @@ func RequestUploadUrlHandler(c *gin.Context) {
 	}
 
 	buildNumber := c.Query("buildNumber")
+	customUpdateId := c.Query("updateId") // Check for custom update ID
+
 	if buildNumber == "" {
 		// Try to get build number from expo-extra-params
 		extraParams := c.GetHeader("expo-extra-params")
@@ -232,8 +234,33 @@ func RequestUploadUrlHandler(c *gin.Context) {
 			if err := json.Unmarshal([]byte(extraParams), &extra); err == nil {
 				if updateCode, ok := extra["updateCode"].(string); ok {
 					buildNumber = updateCode
+					log.Printf("[RequestID: %s] Found build number in expo-extra-params: %s", requestID, buildNumber)
+				}
+			} else {
+				// Try parsing as comma-separated string
+				extraParamsParts := strings.Split(extraParams, ",")
+				for _, part := range extraParamsParts {
+					part = strings.TrimSpace(part)
+					if strings.Contains(part, "expo-build-number") {
+						// Extract the value between quotes
+						start := strings.Index(part, "\"")
+						end := strings.LastIndex(part, "\"")
+						if start != -1 && end != -1 && end > start {
+							buildNumber = part[start+1 : end]
+							log.Printf("[RequestID: %s] Found build number in expo-extra-params string: %s", requestID, buildNumber)
+							break
+						}
+					}
 				}
 			}
+		}
+	}
+
+	if buildNumber == "" {
+		// If still not found, try the header
+		buildNumber = c.GetHeader("expo-build-number")
+		if buildNumber != "" {
+			log.Printf("[RequestID: %s] Found build number in expo-build-number header: %s", requestID, buildNumber)
 		}
 	}
 
@@ -250,11 +277,21 @@ func RequestUploadUrlHandler(c *gin.Context) {
 		return
 	}
 
-	// Get the bucket
-	// Let's use any bucket type
-
 	// Generate update ID
-	updateId := uuid.New().String()
+	var updateId string
+	if customUpdateId != "" {
+		// Use the custom update ID if provided
+		updateId = customUpdateId
+		log.Printf("[RequestID: %s] Using custom update ID: %s", requestID, updateId)
+	} else if buildNumber != "" {
+		// Include build number in update ID if available
+		updateId = fmt.Sprintf("build-%s-%s", buildNumber, uuid.New().String())
+		log.Printf("[RequestID: %s] Generated update ID with build number: %s", requestID, updateId)
+	} else {
+		// Default to standard UUID
+		updateId = uuid.New().String()
+		log.Printf("[RequestID: %s] Generated standard update ID: %s", requestID, updateId)
+	}
 
 	// Request upload URLs
 	resolvedBucket := bucket.GetBucket()
@@ -304,6 +341,7 @@ func RequestUploadUrlHandler(c *gin.Context) {
 
 	response := map[string]interface{}{
 		"updateId":       updateId,
+		"buildNumber":    buildNumber, // Include build number in response
 		"uploadRequests": uploadRequests,
 	}
 

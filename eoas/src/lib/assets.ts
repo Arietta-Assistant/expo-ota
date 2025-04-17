@@ -116,6 +116,7 @@ export async function requestUploadUrls({
   runtimeVersion,
   platform,
   commitHash,
+  buildNumber,
 }: {
   body: { fileNames: string[] };
   requestUploadUrl: string;
@@ -123,6 +124,7 @@ export async function requestUploadUrls({
   runtimeVersion: string;
   platform: string;
   commitHash?: string;
+  buildNumber?: string;
 }): Promise<{ uploadRequests: RequestUploadUrlItem[]; updateId: string }> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -134,10 +136,21 @@ export async function requestUploadUrls({
     Object.assign(headers, authHeaders);
   }
 
+  // Build query params including optional buildNumber as customUpdateId
+  const queryParams = new URLSearchParams({
+    runtimeVersion,
+    platform,
+    commitHash: commitHash || '',
+  });
+  
+  // Add buildNumber as customUpdateId if provided
+  if (buildNumber) {
+    // Let the server generate the UUID but include the build number in the ID
+    queryParams.append('buildNumber', buildNumber);
+  }
+
   const response = await fetch(
-    `${requestUploadUrl}?runtimeVersion=${runtimeVersion}&platform=${platform}&commitHash=${
-      commitHash || ''
-    }`,
+    `${requestUploadUrl}?${queryParams.toString()}`,
     {
       method: 'POST',
       headers,
