@@ -4,7 +4,10 @@ import (
 	"expo-open-ota/config"
 	"expo-open-ota/internal/bucket"
 	"expo-open-ota/internal/types"
+	"log"
+	"regexp"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -78,9 +81,62 @@ func GetRuntimeVersions(branch string) ([]bucket.RuntimeVersionWithStats, error)
 	return versions, nil
 }
 
+// ExtractBuildNumber extracts build number from update ID (e.g., "build-11-xxx" → 11)
+func ExtractBuildNumber(updateId string) int {
+	// Try to match build-NUMBER pattern
+	re := regexp.MustCompile(`build-(\d+)`)
+	matches := re.FindStringSubmatch(updateId)
+	if len(matches) > 1 {
+		if num, err := strconv.Atoi(matches[1]); err == nil {
+			return num
+		}
+	}
+
+	// Fallback to any number in the ID
+	re = regexp.MustCompile(`\d+`)
+	matches = re.FindStringSubmatch(updateId)
+	if len(matches) > 0 {
+		if num, err := strconv.Atoi(matches[0]); err == nil {
+			return num
+		}
+	}
+
+	return -1
+}
+
 func GetUpdates(branch, runtimeVersion string) ([]types.Update, error) {
 	resolvedBucket := bucket.GetBucket()
-	return resolvedBucket.GetUpdates(branch, runtimeVersion)
+	updates, err := resolvedBucket.GetUpdates(branch, runtimeVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enhance updates with build number information
+	for i := range updates {
+		buildNum := ExtractBuildNumber(updates[i].UpdateId)
+		if buildNum > 0 {
+			updates[i].BuildNumber = strconv.Itoa(buildNum)
+		}
+	}
+
+	// Sort updates by creation time (newest first)
+	sort.Slice(updates, func(i, j int) bool {
+		// First sort by build number if available
+		if updates[i].BuildNumber != "" && updates[j].BuildNumber != "" {
+			iBuildNum, iErr := strconv.Atoi(updates[i].BuildNumber)
+			jBuildNum, jErr := strconv.Atoi(updates[j].BuildNumber)
+			if iErr == nil && jErr == nil {
+				return iBuildNum > jBuildNum
+			}
+		}
+		// Fall back to creation time
+		return updates[i].CreatedAt > updates[j].CreatedAt
+	})
+
+	log.Printf("Found %d updates for branch=%s, runtimeVersion=%s",
+		len(updates), branch, runtimeVersion)
+
+	return updates, nil
 }
 
 func IsDashboardEnabled() bool {

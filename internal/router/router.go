@@ -52,6 +52,12 @@ func SetupRoutes(router *gin.Engine) {
 		api.GET("/dashboard/runtime-versions/:branch", handlers.GetRuntimeVersionsHandler)
 		api.GET("/dashboard/updates/:branch/:runtimeVersion", handlers.GetUpdatesHandler)
 
+		// Aliases for dashboard endpoints (to match client expectations)
+		api.GET("/settings", handlers.GetSettingsHandler)
+		api.GET("/branches", handlers.GetBranchesHandler)
+		api.GET("/runtime-versions/:branch", handlers.GetRuntimeVersionsHandler)
+		api.GET("/updates/:branch/:runtimeVersion", handlers.GetUpdatesHandler)
+
 		// Update API routes
 		api.POST("/update/upload/:branch", middleware.AuthMiddleware, handlers.UploadHandler)
 		api.POST("/update/request-upload-url/:branch", middleware.AuthMiddleware, handlers.RequestUploadUrlHandler)

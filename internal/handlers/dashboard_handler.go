@@ -123,5 +123,35 @@ func GetUpdatesHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting updates"})
 		return
 	}
-	c.JSON(http.StatusOK, updates)
+
+	// Enhance the updates with extra information if possible
+	enhancedUpdates := make([]gin.H, 0, len(updates))
+	for _, update := range updates {
+		updateInfo := gin.H{
+			"updateId":       update.UpdateId,
+			"branch":         update.Branch,
+			"runtimeVersion": update.RuntimeVersion,
+			"createdAt":      update.CreatedAt,
+		}
+
+		// Add build number if available
+		if update.BuildNumber != "" {
+			updateInfo["buildNumber"] = update.BuildNumber
+		}
+
+		// Try to get more details about the update
+		if update.CommitHash != "" {
+			updateInfo["commitHash"] = update.CommitHash
+		}
+
+		if update.Platform != "" {
+			updateInfo["platform"] = update.Platform
+		}
+
+		enhancedUpdates = append(enhancedUpdates, updateInfo)
+	}
+
+	log.Printf("Returning %d updates for branch=%s, runtimeVersion=%s",
+		len(enhancedUpdates), branch, runtimeVersion)
+	c.JSON(http.StatusOK, enhancedUpdates)
 }
