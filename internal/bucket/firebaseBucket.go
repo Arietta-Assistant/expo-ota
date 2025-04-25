@@ -10,6 +10,8 @@ import (
 	"io"
 	"log"
 	"path"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -249,17 +251,21 @@ func (b *FirebaseBucket) GetUpdates(branch string, runtimeVersion string) ([]typ
 	objectPath := path.Join("updates", branch, runtimeVersion)
 	log.Printf("Querying for updates in path: %s", objectPath)
 
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// List all objects in the specified path
-	iter := b.bucket.Objects(context.Background(), &storage.Query{
-		Prefix:    objectPath,
+	iter := b.bucket.Objects(ctx, &storage.Query{
+		Prefix:    objectPath + "/",
 		Delimiter: "/",
 	})
 
-	var paths []string
+	var updateIDs []string
 	// First pass: collect all update IDs
 	for {
 		attrs, err := iter.Next()
-		if err == iterator.Done {
+		if err == iterator.Done || err == io.EOF {
 			break
 		}
 		if err != nil {
@@ -270,94 +276,151 @@ func (b *FirebaseBucket) GetUpdates(branch string, runtimeVersion string) ([]typ
 		// For directory prefixes, extract the update ID
 		if attrs.Prefix != "" {
 			updateID := path.Base(strings.TrimSuffix(attrs.Prefix, "/"))
-			paths = append(paths, updateID)
+			updateIDs = append(updateIDs, updateID)
 			log.Printf("Found update ID: %s", updateID)
 		}
 	}
 
-	log.Printf("Found %d potential update IDs in %s", len(paths), objectPath)
+	log.Printf("Found %d potential update IDs in %s", len(updateIDs), objectPath)
 
-	// Special handling for a specific update ID format
-	for _, updateID := range paths {
-		if strings.HasPrefix(updateID, "build-7-") {
-			log.Printf("IMPORTANT: Found update with build-7 prefix: %s", updateID)
-		}
+	// Extract and sort by build number if present
+	type updateWithBuild struct {
+		updateID   string
+		buildNum   int
+		isBuildNum bool
 	}
 
-	// Second pass: process each update ID
-	for _, updateID := range paths {
-		// Try to read metadata for this update ID
-		metadataPath := path.Join(objectPath, updateID, "metadata.json")
+	updates := make([]updateWithBuild, 0, len(updateIDs))
 
-		log.Printf("Looking for metadata at: %s", metadataPath)
-		reader, err := b.bucket.Object(metadataPath).NewReader(context.Background())
-		if err != nil {
-			log.Printf("Error reading metadata for update %s: %v", updateID, err)
-			continue
-		}
-		defer reader.Close()
+	// Process update IDs to extract build numbers
+	for _, id := range updateIDs {
+		update := updateWithBuild{updateID: id}
 
-		// Try to parse the metadata
-		var metadata map[string]interface{}
-		metadataContent, err := io.ReadAll(reader)
-		if err != nil {
-			log.Printf("Error reading metadata content for update %s: %v", updateID, err)
-			continue
-		}
-
-		log.Printf("Successfully read metadata file for update: %s", updateID)
-
-		if err := json.Unmarshal(metadataContent, &metadata); err != nil {
-			log.Printf("Error parsing metadata JSON for update %s: %v", updateID, err)
-			continue
-		}
-
-		// Check for "extra" map to extract buildNumber
-		var buildNumber string
-		if extra, ok := metadata["extra"].(map[string]interface{}); ok {
-			if bn, ok := extra["buildNumber"]; ok {
-				buildNumber = fmt.Sprintf("%v", bn)
-				log.Printf("Found buildNumber %s for update %s", buildNumber, updateID)
-			} else {
-				log.Printf("No buildNumber found in extra for update %s", updateID)
-			}
-		} else if metadataObj, ok := metadata["metadata"].(map[string]interface{}); ok {
-			if extra, ok := metadataObj["extra"].(map[string]interface{}); ok {
-				if bn, ok := extra["buildNumber"]; ok {
-					buildNumber = fmt.Sprintf("%v", bn)
-					log.Printf("Found buildNumber %s in nested metadata for update %s", buildNumber, updateID)
-				} else {
-					log.Printf("No buildNumber found in nested metadata.extra for update %s", updateID)
+		// Special handling for build-X-ID format
+		if strings.HasPrefix(id, "build-") {
+			parts := strings.SplitN(id, "-", 3)
+			if len(parts) >= 2 {
+				if num, err := strconv.Atoi(parts[1]); err == nil {
+					update.buildNum = num
+					update.isBuildNum = true
+					log.Printf("Extracted build number %d from update ID: %s", num, id)
 				}
 			}
 		}
 
-		// Create the update object
-		update := types.Update{
+		updates = append(updates, update)
+	}
+
+	// Sort updates by build number (if available)
+	sort.Slice(updates, func(i, j int) bool {
+		// First sort by build number if available for both
+		if updates[i].isBuildNum && updates[j].isBuildNum {
+			return updates[i].buildNum > updates[j].buildNum // higher build numbers first
+		}
+		// Build numbers before non-build numbers
+		if updates[i].isBuildNum {
+			return true
+		}
+		if updates[j].isBuildNum {
+			return false
+		}
+		// Alphabetical for non-build numbers
+		return updates[i].updateID > updates[j].updateID
+	})
+
+	// Second pass: Convert to types.Update objects
+	for _, update := range updates {
+		updateID := update.updateID
+
+		// Create base update object
+		updateObj := types.Update{
 			Branch:         branch,
 			RuntimeVersion: runtimeVersion,
 			UpdateId:       updateID,
 		}
 
-		// Parse creation time from update ID if possible
-		if strings.HasPrefix(updateID, "build-") {
-			parts := strings.Split(updateID, "-")
-			if len(parts) > 1 {
-				buildNumberStr := parts[1]
-				log.Printf("Extracted build number part from ID: %s", buildNumberStr)
+		// If this is a build number update, use that info
+		if update.isBuildNum {
+			updateObj.BuildNumber = strconv.Itoa(update.buildNum)
+			// Try to extract a timestamp
+			if strings.HasPrefix(updateID, "build-") {
+				// Add timestamp based on build number - higher build numbers are more recent
+				// This is a very rough approximation
+				daysAgo := 100 - update.buildNum // Approximation: build-100 would be today, build-1 would be 99 days ago
+				secondsAgo := daysAgo * 24 * 60 * 60
+				updateObj.CreatedAt = time.Duration(secondsAgo) * time.Second
 			}
 		}
 
-		// Always add the update to results regardless of buildNumber
-		log.Printf("Adding update %s to results", updateID)
-		result = append(result, update)
+		// Try to read metadata.json if it exists, but don't fail if it doesn't
+		metadataPath := path.Join(objectPath, updateID, "metadata.json")
+		reader, err := b.bucket.Object(metadataPath).NewReader(ctx)
+
+		if err == nil {
+			// Successfully opened metadata.json
+			log.Printf("Reading metadata from: %s", metadataPath)
+			metadataContent, err := io.ReadAll(reader)
+			reader.Close()
+
+			if err == nil {
+				var metadata map[string]interface{}
+				if json.Unmarshal(metadataContent, &metadata) == nil {
+					log.Printf("Successfully parsed metadata for update: %s", updateID)
+
+					// Try to extract additional information
+					if extra, ok := metadata["extra"].(map[string]interface{}); ok {
+						// Extract build number if not already set
+						if updateObj.BuildNumber == "" {
+							if bn, ok := extra["buildNumber"]; ok {
+								updateObj.BuildNumber = fmt.Sprintf("%v", bn)
+							}
+						}
+
+						// Extract other fields if available
+						if commitHash, ok := extra["commitHash"]; ok {
+							updateObj.CommitHash = fmt.Sprintf("%v", commitHash)
+						}
+					}
+
+					// Try to extract info from nested metadata
+					if nestedMeta, ok := metadata["metadata"].(map[string]interface{}); ok {
+						if extra, ok := nestedMeta["extra"].(map[string]interface{}); ok {
+							if updateObj.BuildNumber == "" {
+								if bn, ok := extra["buildNumber"]; ok {
+									updateObj.BuildNumber = fmt.Sprintf("%v", bn)
+								}
+							}
+						}
+					}
+				}
+			}
+		} else {
+			// Metadata file doesn't exist - this is okay, we'll use what we have
+			log.Printf("No metadata.json found for update %s (this is okay): %v", updateID, err)
+
+			// Try alternate metadata file name: update-metadata.json
+			altMetadataPath := path.Join(objectPath, updateID, "update-metadata.json")
+			altReader, altErr := b.bucket.Object(altMetadataPath).NewReader(ctx)
+
+			if altErr == nil {
+				log.Printf("Found alternative metadata at: %s", altMetadataPath)
+				altContent, _ := io.ReadAll(altReader)
+				altReader.Close()
+
+				var altMetadata map[string]interface{}
+				if json.Unmarshal(altContent, &altMetadata) == nil {
+					// Process alternative metadata if needed
+					log.Printf("Successfully parsed alternative metadata for update: %s", updateID)
+				}
+			}
+		}
+
+		// Always add the update to results
+		log.Printf("Adding update %s to results (build number: %s)", updateID, updateObj.BuildNumber)
+		result = append(result, updateObj)
 	}
 
 	log.Printf("Completed GetUpdates, found %d updates for %s/%s", len(result), branch, runtimeVersion)
-	for i, update := range result {
-		log.Printf("Result update #%d: %s", i+1, update.UpdateId)
-	}
-
 	return result, nil
 }
 
@@ -445,20 +508,27 @@ func (b *FirebaseBucket) GetBranches() ([]string, error) {
 }
 
 func (b *FirebaseBucket) GetRuntimeVersions(branch string) ([]RuntimeVersionWithStats, error) {
+	log.Printf("Getting runtime versions for branch: %s", branch)
 	prefix := path.Join("updates", branch) + "/"
 	query := &storage.Query{
 		Prefix:    prefix,
 		Delimiter: "/",
 	}
-	iter := b.bucket.Objects(context.Background(), query)
+
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	iter := b.bucket.Objects(ctx, query)
 
 	runtimeVersions := make(map[string]*RuntimeVersionWithStats)
 	for {
 		attrs, err := iter.Next()
-		if err == io.EOF {
+		if err == io.EOF || err == iterator.Done {
 			break
 		}
 		if err != nil {
+			log.Printf("Error iterating objects for runtime versions: %v", err)
 			return nil, fmt.Errorf("error iterating objects: %w", err)
 		}
 
@@ -467,25 +537,45 @@ func (b *FirebaseBucket) GetRuntimeVersions(branch string) ([]RuntimeVersionWith
 			version := strings.TrimPrefix(attrs.Prefix, prefix)
 			version = strings.TrimSuffix(version, "/")
 			if version != "" {
-				// Get updates for this runtime version to count them
-				updates, err := b.GetUpdates(branch, version)
-				if err != nil {
-					return nil, err
+				log.Printf("Found runtime version: %s", version)
+
+				// Instead of calling GetUpdates, which might fail if metadata doesn't exist,
+				// we'll just add the runtime version with default stats
+				runtimeVersions[version] = &RuntimeVersionWithStats{
+					RuntimeVersion:  version,
+					LastUpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+					CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+					NumberOfUpdates: 0, // Default to 0, we'll determine this later
 				}
 
-				var lastUpdatedAt time.Time
-				for _, update := range updates {
-					updateTime := time.Unix(0, int64(update.CreatedAt))
-					if updateTime.After(lastUpdatedAt) {
-						lastUpdatedAt = updateTime
+				// Optionally, try to count the number of updates
+				updatePrefix := attrs.Prefix // This is already "updates/branch/version/"
+				updateQuery := &storage.Query{
+					Prefix:    updatePrefix,
+					Delimiter: "/",
+				}
+
+				updateIter := b.bucket.Objects(ctx, updateQuery)
+				updateCount := 0
+
+				for {
+					updateAttrs, updateErr := updateIter.Next()
+					if updateErr == io.EOF || updateErr == iterator.Done {
+						break
+					}
+					if updateErr != nil {
+						log.Printf("Error counting updates for %s: %v", version, updateErr)
+						break // Continue with the next runtime version
+					}
+
+					if updateAttrs.Prefix != "" {
+						updateCount++
 					}
 				}
 
-				runtimeVersions[version] = &RuntimeVersionWithStats{
-					RuntimeVersion:  version,
-					LastUpdatedAt:   lastUpdatedAt.UTC().Format(time.RFC3339),
-					CreatedAt:       lastUpdatedAt.UTC().Format(time.RFC3339), // Using lastUpdatedAt as createdAt since we don't have the actual creation time
-					NumberOfUpdates: len(updates),
+				if updateCount > 0 {
+					log.Printf("Found %d updates for runtime version %s", updateCount, version)
+					runtimeVersions[version].NumberOfUpdates = updateCount
 				}
 			}
 		}
@@ -497,6 +587,12 @@ func (b *FirebaseBucket) GetRuntimeVersions(branch string) ([]RuntimeVersionWith
 		result = append(result, *stats)
 	}
 
+	// Sort by version number (assuming semantic versioning)
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].RuntimeVersion > result[j].RuntimeVersion
+	})
+
+	log.Printf("Found %d runtime versions for branch %s", len(result), branch)
 	return result, nil
 }
 
