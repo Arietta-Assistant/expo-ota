@@ -26,6 +26,23 @@ func SetupRoutes(router *gin.Engine) {
 		metrics.PrometheusHandler().ServeHTTP(c.Writer, c.Request)
 	})
 
+	// Authentication routes for dashboard
+	router.POST("/auth/login", func(c *gin.Context) {
+		log.Printf("Auth login request received")
+		handlers.LoginHandler(c.Writer, c.Request)
+	})
+
+	router.POST("/auth/refresh", func(c *gin.Context) {
+		log.Printf("Auth refresh request received")
+		handlers.RefreshTokenHandler(c.Writer, c.Request)
+	})
+
+	// Add the /auth/refreshToken endpoint that matches what the client expects
+	router.POST("/auth/refreshToken", func(c *gin.Context) {
+		log.Printf("Auth refreshToken request received")
+		handlers.RefreshTokenHandler(c.Writer, c.Request)
+	})
+
 	// API routes
 	api := router.Group("/api")
 	{
@@ -56,7 +73,14 @@ func SetupRoutes(router *gin.Engine) {
 			if path == "/env.js" {
 				baseURL := config.GetEnv("BASE_URL")
 				if baseURL == "" {
-					baseURL = "http://localhost:3000"
+					// Try to use the current request's host if BASE_URL is not set
+					host := c.Request.Host
+					proto := "http"
+					if c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https" {
+						proto = "https"
+					}
+					baseURL = fmt.Sprintf("%s://%s", proto, host)
+					log.Printf("BASE_URL not set, using request host instead: %s", baseURL)
 				}
 				c.Header("Content-Type", "application/javascript")
 				c.String(http.StatusOK, fmt.Sprintf("window.env = { VITE_OTA_API_URL: '%s' };", baseURL))
