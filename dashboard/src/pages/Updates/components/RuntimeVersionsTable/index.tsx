@@ -44,17 +44,18 @@ export const RuntimeVersionsTable = ({ branch }: { branch: string }) => {
             header: 'Runtime version',
             accessorKey: 'runtimeVersion',
             cell: value => {
+              const runtimeVersion = value.row.original?.runtimeVersion || '';
               return (
                 <button
                   className="flex flex-row gap-2 items-center cursor-pointer w-full underline"
                   onClick={() => {
                     setSearchParams({
                       branch,
-                      runtimeVersion: value.row.original.runtimeVersion,
+                      runtimeVersion,
                     });
                   }}>
                   <Milestone className="w-4" />
-                  {value.row.original.runtimeVersion}
+                  {runtimeVersion}
                 </button>
               );
             },
@@ -63,45 +64,72 @@ export const RuntimeVersionsTable = ({ branch }: { branch: string }) => {
             header: 'Created at',
             accessorKey: 'createdAt',
             cell: ({ row }) => {
-              const date = new Date(row.original.createdAt);
-              return (
-                <Badge variant="outline">
-                  {date.toLocaleDateString('en-GB', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: 'numeric',
-                    second: 'numeric',
-                  })}
-                </Badge>
-              );
+              const createdAt = row.original?.createdAt;
+              if (!createdAt) {
+                return <Badge variant="outline">Unknown</Badge>;
+              }
+              
+              try {
+                const date = new Date(createdAt);
+                if (isNaN(date.getTime())) {
+                  return <Badge variant="outline">Invalid date</Badge>;
+                }
+                
+                return (
+                  <Badge variant="outline">
+                    {date.toLocaleDateString('en-GB', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: 'numeric',
+                      second: 'numeric',
+                    })}
+                  </Badge>
+                );
+              } catch {
+                return <Badge variant="outline">Invalid date</Badge>;
+              }
             },
           },
           {
             header: 'Last update',
             accessorKey: 'lastUpdatedAt',
             cell: ({ row }) => {
-              const date = new Date(row.original.lastUpdatedAt);
-              return (
-                <Badge variant="outline">
-                  {date.toLocaleDateString('en-GB', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: 'numeric',
-                    second: 'numeric',
-                  })}
-                </Badge>
-              );
+              const lastUpdatedAt = row.original?.lastUpdatedAt;
+              if (!lastUpdatedAt) {
+                return <Badge variant="outline">Unknown</Badge>;
+              }
+              
+              try {
+                const date = new Date(lastUpdatedAt);
+                if (isNaN(date.getTime())) {
+                  return <Badge variant="outline">Invalid date</Badge>;
+                }
+                
+                return (
+                  <Badge variant="outline">
+                    {date.toLocaleDateString('en-GB', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: 'numeric',
+                      second: 'numeric',
+                    })}
+                  </Badge>
+                );
+              } catch {
+                return <Badge variant="outline">Invalid date</Badge>;
+              }
             },
           },
           {
             header: '# Updates',
             accessorKey: 'numberOfUpdates',
             cell: ({ row }) => {
-              return <Badge variant="secondary">{row.original.numberOfUpdates}</Badge>;
+              const count = typeof row.original?.numberOfUpdates === 'number' ? row.original.numberOfUpdates : 0;
+              return <Badge variant="secondary">{count}</Badge>;
             },
           },
         ]}

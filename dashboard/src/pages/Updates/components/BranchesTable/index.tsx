@@ -22,14 +22,15 @@ export const BranchesTable = () => {
             header: 'Branch name',
             accessorKey: 'branchName',
             cell: value => {
+              const branchName = value.row.original?.branchName || '';
               return (
                 <button
                   className="flex flex-row gap-2 items-center cursor-pointer w-full"
                   onClick={() => {
-                    setSearchParams({ branch: value.row.original.branchName });
+                    setSearchParams({ branch: branchName });
                   }}>
                   <GitBranch className="w-4" />
-                  <span className="underline">{value.row.original.branchName}</span>
+                  <span className="underline">{branchName}</span>
                 </button>
               );
             },
@@ -40,12 +41,15 @@ export const BranchesTable = () => {
             maxSize: 10,
             accessorKey: 'releaseChannel',
             cell: value => {
-              const releaseChannel = value.row.original.releaseChannel;
-              if (!releaseChannel) return <span>N/A</span>;
+              const releaseChannel = value.row.original?.releaseChannel;
+              const hasChannel = typeof releaseChannel === 'string' && releaseChannel.trim() !== '';
+              
+              if (!hasChannel) return <span>N/A</span>;
+              
               return (
                 <div className="flex flex-row gap-2 items-center">
                   <Box className="w-4" />
-                  <span>{value.row.original.releaseChannel}</span>
+                  <span>{releaseChannel}</span>
                 </div>
               );
             },
