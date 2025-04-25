@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 )
 
@@ -40,10 +41,29 @@ var bucket Bucket
 var bucketInitError error
 
 func init() {
+	// Get bucket configuration
 	bucketType := config.GetEnv("BUCKET_TYPE")
+	storageMode := config.GetEnv("STORAGE_MODE")
+
+	// Align storage mode with bucket type if needed
+	if bucketType != "" && (storageMode == "" || storageMode != string(bucketType)) {
+		log.Printf("STORAGE_MODE (%s) doesn't match BUCKET_TYPE (%s), setting STORAGE_MODE=%s",
+			storageMode, bucketType, bucketType)
+		// Update the storage mode to match bucket type
+		os.Setenv("STORAGE_MODE", string(bucketType))
+		storageMode = string(bucketType)
+	} else if bucketType == "" && storageMode != "" {
+		// If bucket type is not set but storage mode is, set bucket type to match storage mode
+		log.Printf("BUCKET_TYPE not set but STORAGE_MODE is %s, setting BUCKET_TYPE=%s", storageMode, storageMode)
+		os.Setenv("BUCKET_TYPE", storageMode)
+		bucketType = storageMode
+	}
+
 	if bucketType == "" {
 		bucketType = string(LocalBucketType)
-		log.Printf("No BUCKET_TYPE specified, using default: %s", bucketType)
+		log.Printf("No BUCKET_TYPE or STORAGE_MODE specified, using default: %s", bucketType)
+		os.Setenv("BUCKET_TYPE", bucketType)
+		os.Setenv("STORAGE_MODE", bucketType)
 	} else {
 		log.Printf("Using bucket type: %s", bucketType)
 	}
@@ -55,11 +75,22 @@ func init() {
 		log.Printf("Initializing local bucket with path: %s", config.GetEnv("LOCAL_BUCKET_BASE_PATH"))
 		bucket = NewLocalBucket()
 	case FirebaseBucketType:
-		log.Printf("Initializing Firebase bucket")
+		log.Printf("Initializing Firebase bucket (storage bucket: %s, project ID: %s)",
+			config.GetEnv("FIREBASE_STORAGE_BUCKET"),
+			config.GetEnv("FIREBASE_PROJECT_ID"))
 		var err error
 		bucket, err = NewFirebaseBucket()
 		if err != nil {
 			initErr = fmt.Errorf("error creating Firebase bucket: %w", err)
+			log.Printf("Firebase initialization error details: %v", err)
+
+			// Check for common configuration issues
+			if config.GetEnv("FIREBASE_PROJECT_ID") == "" && config.GetEnv("FIREBASE_SERVICE_ACCOUNT") == "" {
+				log.Printf("ERROR: Neither FIREBASE_PROJECT_ID nor FIREBASE_SERVICE_ACCOUNT is set")
+			}
+			if config.GetEnv("FIREBASE_STORAGE_BUCKET") == "" {
+				log.Printf("WARNING: FIREBASE_STORAGE_BUCKET is not set")
+			}
 		}
 	case S3BucketType:
 		log.Printf("Initializing S3 bucket: %s in region %s", config.GetEnv("S3_BUCKET_NAME"), config.GetEnv("AWS_REGION"))
@@ -74,6 +105,8 @@ func init() {
 		log.Printf("Falling back to a local bucket")
 		bucket = NewLocalBucket()
 		bucketInitError = initErr
+	} else {
+		log.Printf("Successfully initialized bucket of type: %s", bucketType)
 	}
 }
 

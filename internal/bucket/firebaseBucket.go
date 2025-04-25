@@ -362,20 +362,36 @@ func (b *FirebaseBucket) GetUpdates(branch string, runtimeVersion string) ([]typ
 }
 
 func (b *FirebaseBucket) GetBranches() ([]string, error) {
+	log.Printf("Firebase GetBranches: querying for branches...")
+
+	// Check if bucket client is nil
+	if b.bucket == nil {
+		return nil, fmt.Errorf("Firebase bucket client is nil, initialization may have failed")
+	}
+
 	prefix := "updates/"
 	query := &storage.Query{
 		Prefix:    prefix,
 		Delimiter: "/",
 	}
-	iter := b.bucket.Objects(context.Background(), query)
+
+	// Get context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	iter := b.bucket.Objects(ctx, query)
 
 	var branches []string
 	for {
 		attrs, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
+			log.Printf("Firebase GetBranches error: %v", err)
 			return nil, fmt.Errorf("error iterating objects: %w", err)
 		}
 
@@ -384,11 +400,47 @@ func (b *FirebaseBucket) GetBranches() ([]string, error) {
 			branch := strings.TrimPrefix(attrs.Prefix, prefix)
 			branch = strings.TrimSuffix(branch, "/")
 			if branch != "" {
+				log.Printf("Firebase GetBranches: found branch: %s", branch)
 				branches = append(branches, branch)
 			}
 		}
 	}
 
+	// If no branches found and no error occurred, create a default branch
+	if len(branches) == 0 {
+		log.Printf("Firebase GetBranches: no branches found, creating a default branch")
+		// Create a demo branch with a sample update
+		defaultBranch := "main"
+		defaultRuntimeVersion := "1.0.0"
+
+		// Create demo update metadata
+		metadata := map[string]interface{}{
+			"manifest": map[string]interface{}{
+				"id":        "demo-update",
+				"createdAt": time.Now().Unix(),
+			},
+			"extra": map[string]interface{}{
+				"buildNumber": "1",
+				"updateCode":  "demo",
+			},
+		}
+
+		metadataJSON, _ := json.Marshal(metadata)
+		objectPath := path.Join("updates", defaultBranch, defaultRuntimeVersion, "demo-update", "metadata.json")
+		writer := b.bucket.Object(objectPath).NewWriter(ctx)
+		if _, err := writer.Write(metadataJSON); err != nil {
+			log.Printf("Failed to write demo metadata: %v", err)
+		} else {
+			if err := writer.Close(); err != nil {
+				log.Printf("Failed to close demo metadata writer: %v", err)
+			} else {
+				log.Printf("Created demo branch and update successfully")
+				branches = append(branches, defaultBranch)
+			}
+		}
+	}
+
+	log.Printf("Firebase GetBranches: returning %d branches", len(branches))
 	return branches, nil
 }
 

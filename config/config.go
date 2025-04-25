@@ -10,7 +10,7 @@ import (
 )
 
 func validateStorageMode(storageMode string) bool {
-	return storageMode == "local" || storageMode == "s3"
+	return storageMode == "local" || storageMode == "s3" || storageMode == "firebase"
 }
 
 func validateBucketParams(storageMode string) bool {
@@ -26,6 +26,23 @@ func validateBucketParams(storageMode string) bool {
 			log.Printf("AWS_REGION not set")
 			return false
 		}
+	case "firebase":
+		// Check for Firebase project ID or service account credentials
+		projectID := GetEnv("FIREBASE_PROJECT_ID")
+		serviceAccount := GetEnv("FIREBASE_SERVICE_ACCOUNT")
+		if projectID == "" && serviceAccount == "" {
+			log.Printf("Neither FIREBASE_PROJECT_ID nor FIREBASE_SERVICE_ACCOUNT is set")
+			return false
+		}
+		// Bucket name is optional (derived from project ID if not set)
+		// but we'll log a warning if it's missing
+		bucketName := GetEnv("FIREBASE_STORAGE_BUCKET")
+		if bucketName == "" && projectID != "" {
+			log.Printf("FIREBASE_STORAGE_BUCKET not set, will use default from project ID: %s.appspot.com", projectID)
+		} else if bucketName == "" {
+			log.Printf("Warning: FIREBASE_STORAGE_BUCKET not set and cannot be derived (no project ID)")
+		}
+		return true
 	case "local":
 		// Already handled by default values
 		return true
@@ -77,12 +94,16 @@ func LoadConfig() {
 var DefaultEnvValues = map[string]string{
 	"LOCAL_BUCKET_BASE_PATH":      "./updates",
 	"STORAGE_MODE":                "local",
+	"BUCKET_TYPE":                 "local",
 	"BASE_URL":                    "http://localhost:3000",
 	"PUBLIC_LOCAL_EXPO_KEY_PATH":  "./keyStore/public-key.pem",
 	"PRIVATE_LOCAL_EXPO_KEY_PATH": "./keyStore/private-key.pem",
 	"KEYS_STORAGE_TYPE":           "local",
 	"JWT_SECRET":                  "",
 	"AWS_REGION":                  "eu-west-3",
+	"FIREBASE_PROJECT_ID":         "",
+	"FIREBASE_STORAGE_BUCKET":     "",
+	"FIREBASE_SERVICE_ACCOUNT":    "",
 }
 
 func GetEnv(key string) string {
