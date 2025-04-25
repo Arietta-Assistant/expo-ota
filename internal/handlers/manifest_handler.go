@@ -43,13 +43,18 @@ func signDirectiveOrManifest(content interface{}, expectSignatureHeader string) 
 		return "", nil
 	}
 	privateKey := keyStore.GetPrivateExpoKey()
+	if privateKey == "" {
+		log.Printf("Warning: No private key available for signing. Continuing without signature.")
+		return "", nil
+	}
 	contentJSON, err := json.Marshal(content)
 	if err != nil {
 		return "", fmt.Errorf("error stringifying content: %w", err)
 	}
 	signedHash, err := crypto.SignRSASHA256(string(contentJSON), privateKey)
 	if err != nil {
-		return "", fmt.Errorf("error signing content hash: %w", err)
+		log.Printf("Warning: Error signing content with private key: %v. Continuing without signature.", err)
+		return "", nil
 	}
 	return signedHash, nil
 }
@@ -233,13 +238,7 @@ func compareBuildNumbersWithRequestID(current, update string, requestID string) 
 // extractBuildNumber extracts build number from a string like "build-NUMBER-updateid" or just "12"
 // Returns the build number as an integer, or -1 if not found
 func extractBuildNumber(str string) int {
-	// First check if it's a direct number
-	num, err := strconv.Atoi(str)
-	if err == nil {
-		return num
-	}
-
-	// Check for "build-NUMBER" format
+	// Only extract from build-NUMBER format
 	if strings.HasPrefix(str, "build-") {
 		parts := strings.SplitN(strings.TrimPrefix(str, "build-"), "-", 2)
 		if len(parts) > 0 {
@@ -250,15 +249,13 @@ func extractBuildNumber(str string) int {
 		}
 	}
 
-	// Check for any number at the beginning of the string
-	parts := strings.Split(str, "-")
-	for _, part := range parts {
-		num, err := strconv.Atoi(part)
-		if err == nil {
-			return num
-		}
+	// For direct number format (less common)
+	num, err := strconv.Atoi(str)
+	if err == nil {
+		return num
 	}
 
+	// Not a valid build number format
 	return -1
 }
 
