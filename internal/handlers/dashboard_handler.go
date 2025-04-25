@@ -78,12 +78,33 @@ func GetSettingsHandler(c *gin.Context) {
 }
 
 func GetBranchesHandler(c *gin.Context) {
+	log.Printf("Getting branches...")
 	branches, err := dashboard.GetBranches()
 	if err != nil {
 		log.Printf("Error getting branches: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting branches"})
+		// Add more detailed error output
+		bucket := config.GetEnv("BUCKET_TYPE")
+		storageMode := config.GetEnv("STORAGE_MODE")
+		log.Printf("Current bucket type: %s, storage mode: %s", bucket, storageMode)
+
+		// Log storage configuration based on storage mode
+		switch storageMode {
+		case "s3":
+			log.Printf("S3 configuration - Bucket: %s, Region: %s",
+				config.GetEnv("S3_BUCKET_NAME"),
+				config.GetEnv("AWS_REGION"))
+		case "local":
+			log.Printf("Local storage configuration - Path: %s",
+				config.GetEnv("LOCAL_BUCKET_BASE_PATH"))
+		case "firebase":
+			log.Printf("Firebase configuration - Project ID exists: %v",
+				config.GetEnv("FIREBASE_PROJECT_ID") != "")
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting branches: " + err.Error()})
 		return
 	}
+	log.Printf("Found %d branches", len(branches))
 	c.JSON(http.StatusOK, branches)
 }
 

@@ -16,6 +16,7 @@ import (
 	"bytes"
 
 	"cloud.google.com/go/storage"
+	firebase "firebase.google.com/go/v4"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -31,27 +32,90 @@ func NewFirebaseBucket() (*FirebaseBucket, error) {
 	// Get Firebase credentials from environment variables
 	base64Credentials := config.GetEnv("FIREBASE_SERVICE_ACCOUNT")
 	if base64Credentials == "" {
-		return nil, fmt.Errorf("FIREBASE_SERVICE_ACCOUNT environment variable is not set")
+		log.Printf("Warning: FIREBASE_SERVICE_ACCOUNT environment variable is not set")
+		// Try alternative approaches
+		projectID := config.GetEnv("FIREBASE_PROJECT_ID")
+		if projectID == "" {
+			return nil, fmt.Errorf("missing required Firebase configuration (either FIREBASE_SERVICE_ACCOUNT or FIREBASE_PROJECT_ID)")
+		}
+
+		// If we have project ID but no credentials, try to use default credentials
+		log.Printf("Attempting to initialize Firebase with project ID but no explicit credentials")
+
+		// Initialize with project ID
+		app, err := firebase.NewApp(ctx, &firebase.Config{
+			ProjectID: projectID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("error initializing Firebase app: %w", err)
+		}
+
+		// Get the storage client
+		client, err := app.Storage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("error initializing Firebase storage client: %w", err)
+		}
+
+		// Get bucket name
+		bucketName := config.GetEnv("FIREBASE_STORAGE_BUCKET")
+		if bucketName == "" {
+			bucketName = projectID + ".appspot.com"
+			log.Printf("FIREBASE_STORAGE_BUCKET not set, using default: %s", bucketName)
+		}
+
+		bucket, err := client.Bucket(bucketName)
+		if err != nil {
+			return nil, fmt.Errorf("error accessing Firebase storage bucket: %w", err)
+		}
+
+		log.Printf("Successfully initialized Firebase bucket using project ID: %s", projectID)
+		return &FirebaseBucket{
+			client: client,
+			bucket: bucket,
+		}, nil
 	}
 
-	// Decode base64 credentials
+	// Decode base64 credentials if provided
 	credentials, err := base64.StdEncoding.DecodeString(base64Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("error decoding Firebase credentials: %w", err)
 	}
 
-	client, err := storage.NewClient(ctx, option.WithCredentialsJSON(credentials))
+	// Initialize with credentials
+	app, err := firebase.NewApp(ctx, nil, option.WithCredentialsJSON(credentials))
 	if err != nil {
-		return nil, fmt.Errorf("error creating Firebase Storage client: %w", err)
+		return nil, fmt.Errorf("error initializing Firebase app with credentials: %w", err)
 	}
 
+	// Get storage client
+	client, err := app.Storage(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing Firebase storage client: %w", err)
+	}
+
+	// Get bucket name
 	bucketName := config.GetEnv("FIREBASE_STORAGE_BUCKET")
 	if bucketName == "" {
-		return nil, fmt.Errorf("FIREBASE_STORAGE_BUCKET environment variable is not set")
+		// Try to get project ID from the credentials to derive bucket name
+		var creds map[string]interface{}
+		if err := json.Unmarshal(credentials, &creds); err == nil {
+			if projectID, ok := creds["project_id"].(string); ok && projectID != "" {
+				bucketName = projectID + ".appspot.com"
+				log.Printf("Derived bucket name from credentials: %s", bucketName)
+			}
+		}
+
+		if bucketName == "" {
+			return nil, fmt.Errorf("FIREBASE_STORAGE_BUCKET environment variable is not set and could not be derived")
+		}
 	}
 
-	bucket := client.Bucket(bucketName)
+	bucket, err := client.Bucket(bucketName)
+	if err != nil {
+		return nil, fmt.Errorf("error accessing Firebase storage bucket: %w", err)
+	}
 
+	log.Printf("Successfully initialized Firebase bucket using service account credentials")
 	return &FirebaseBucket{
 		client: client,
 		bucket: bucket,

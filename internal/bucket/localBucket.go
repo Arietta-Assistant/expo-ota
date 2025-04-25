@@ -8,6 +8,7 @@ import (
 	"expo-open-ota/internal/types"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/url"
 	"os"
@@ -27,7 +28,16 @@ func NewLocalBucket() *LocalBucket {
 	basePath := config.GetEnv("LOCAL_BUCKET_BASE_PATH")
 	if basePath == "" {
 		basePath = "./updates"
+		log.Printf("LOCAL_BUCKET_BASE_PATH not set, using default: %s", basePath)
 	}
+
+	// Ensure the directory exists
+	if err := os.MkdirAll(basePath, 0755); err != nil {
+		log.Printf("Warning: Could not create local bucket directory %s: %v", basePath, err)
+	} else {
+		log.Printf("Local bucket directory ensured at: %s", basePath)
+	}
+
 	return &LocalBucket{BasePath: basePath}
 }
 
@@ -116,16 +126,45 @@ func (b *LocalBucket) GetBranches() ([]string, error) {
 	if b.BasePath == "" {
 		return nil, errors.New("BasePath not set")
 	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(b.BasePath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create bucket directory: %w", err)
+	}
+
 	entries, err := os.ReadDir(b.BasePath)
 	if err != nil {
 		return nil, err
 	}
+
 	var branches []string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			branches = append(branches, entry.Name())
 		}
 	}
+
+	// If no branches, create a demo branch
+	if len(branches) == 0 {
+		log.Printf("No branches found, creating demo branch")
+
+		// Create default demo branch
+		demoBranch := "main"
+		demoBranchPath := filepath.Join(b.BasePath, demoBranch)
+
+		// Create runtime version directory
+		demoRuntimeVersion := "1.0.0"
+		demoRuntimePath := filepath.Join(demoBranchPath, demoRuntimeVersion)
+
+		// Create directories
+		if err := os.MkdirAll(demoRuntimePath, 0755); err != nil {
+			log.Printf("Warning: Failed to create demo branch structure: %v", err)
+		} else {
+			log.Printf("Created demo branch: %s with runtime version: %s", demoBranch, demoRuntimeVersion)
+			branches = append(branches, demoBranch)
+		}
+	}
+
 	return branches, nil
 }
 
@@ -133,18 +172,25 @@ func (b *LocalBucket) GetRuntimeVersions(branch string) ([]RuntimeVersionWithSta
 	if b.BasePath == "" {
 		return nil, errors.New("BasePath not set")
 	}
-	dirPath := filepath.Join(b.BasePath, branch)
-	entries, err := os.ReadDir(dirPath)
+
+	// Ensure branch directory exists
+	branchPath := filepath.Join(b.BasePath, branch)
+	if err := os.MkdirAll(branchPath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create branch directory: %w", err)
+	}
+
+	entries, err := os.ReadDir(branchPath)
 	if err != nil {
 		return nil, err
 	}
+
 	var runtimeVersions []RuntimeVersionWithStats
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		runtimeVersion := entry.Name()
-		updatesPath := filepath.Join(dirPath, runtimeVersion)
+		updatesPath := filepath.Join(branchPath, runtimeVersion)
 		updates, err := os.ReadDir(updatesPath)
 		if err != nil {
 			continue
@@ -160,6 +206,32 @@ func (b *LocalBucket) GetRuntimeVersions(branch string) ([]RuntimeVersionWithSta
 			}
 			updateTimestamps = append(updateTimestamps, timestamp)
 		}
+
+		// If no updates, create a sample update for this runtime version
+		if len(updateTimestamps) == 0 {
+			log.Printf("No updates found for %s/%s, creating a sample update", branch, runtimeVersion)
+
+			// Create a timestamp-based update ID
+			now := time.Now().UnixMilli()
+			updateDirPath := filepath.Join(updatesPath, strconv.FormatInt(now, 10))
+
+			// Create update directory and add a sample metadata file
+			if err := os.MkdirAll(updateDirPath, 0755); err != nil {
+				log.Printf("Warning: Failed to create sample update: %v", err)
+			} else {
+				// Create a simple metadata.json file
+				metadataPath := filepath.Join(updateDirPath, "metadata.json")
+				sampleMetadata := `{"version":0,"bundler":"metro","fileMetadata":{"android":{"bundle":"","assets":[]},"ios":{"bundle":"","assets":[]}},"extra":{"commitHash":"sample","updateCode":"build-1","platform":"android"}}`
+
+				if err := os.WriteFile(metadataPath, []byte(sampleMetadata), 0644); err != nil {
+					log.Printf("Warning: Failed to write sample metadata: %v", err)
+				} else {
+					log.Printf("Created sample update in %s", updateDirPath)
+					updateTimestamps = append(updateTimestamps, now)
+				}
+			}
+		}
+
 		if len(updateTimestamps) == 0 {
 			continue
 		}
@@ -172,6 +244,43 @@ func (b *LocalBucket) GetRuntimeVersions(branch string) ([]RuntimeVersionWithSta
 			LastUpdatedAt:   time.UnixMilli(updateTimestamps[len(updateTimestamps)-1]).UTC().Format(time.RFC3339),
 			NumberOfUpdates: len(updateTimestamps),
 		})
+	}
+
+	// If no runtime versions found, create a default one
+	if len(runtimeVersions) == 0 {
+		// Create default runtime version
+		defaultRuntime := "1.0.0"
+		defaultRuntimePath := filepath.Join(branchPath, defaultRuntime)
+
+		if err := os.MkdirAll(defaultRuntimePath, 0755); err != nil {
+			log.Printf("Warning: Failed to create default runtime version: %v", err)
+		} else {
+			// Create a sample update
+			now := time.Now().UnixMilli()
+			updateDirPath := filepath.Join(defaultRuntimePath, strconv.FormatInt(now, 10))
+
+			if err := os.MkdirAll(updateDirPath, 0755); err != nil {
+				log.Printf("Warning: Failed to create sample update: %v", err)
+			} else {
+				// Create a simple metadata.json file
+				metadataPath := filepath.Join(updateDirPath, "metadata.json")
+				sampleMetadata := `{"version":0,"bundler":"metro","fileMetadata":{"android":{"bundle":"","assets":[]},"ios":{"bundle":"","assets":[]}},"extra":{"commitHash":"sample","updateCode":"build-1","platform":"android"}}`
+
+				if err := os.WriteFile(metadataPath, []byte(sampleMetadata), 0644); err != nil {
+					log.Printf("Warning: Failed to write sample metadata: %v", err)
+				} else {
+					log.Printf("Created sample update in %s", updateDirPath)
+
+					// Add to runtime versions
+					runtimeVersions = append(runtimeVersions, RuntimeVersionWithStats{
+						RuntimeVersion:  defaultRuntime,
+						CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+						LastUpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+						NumberOfUpdates: 1,
+					})
+				}
+			}
+		}
 	}
 
 	return runtimeVersions, nil

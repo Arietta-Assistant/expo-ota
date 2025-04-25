@@ -37,28 +37,50 @@ type Bucket interface {
 }
 
 var bucket Bucket
+var bucketInitError error
 
 func init() {
 	bucketType := config.GetEnv("BUCKET_TYPE")
 	if bucketType == "" {
 		bucketType = string(LocalBucketType)
+		log.Printf("No BUCKET_TYPE specified, using default: %s", bucketType)
+	} else {
+		log.Printf("Using bucket type: %s", bucketType)
 	}
 
-	var err error
+	// First try to initialize the configured bucket type
+	var initErr error
 	switch BucketType(bucketType) {
 	case LocalBucketType:
+		log.Printf("Initializing local bucket with path: %s", config.GetEnv("LOCAL_BUCKET_BASE_PATH"))
 		bucket = NewLocalBucket()
 	case FirebaseBucketType:
+		log.Printf("Initializing Firebase bucket")
+		var err error
 		bucket, err = NewFirebaseBucket()
 		if err != nil {
-			log.Fatalf("Error creating Firebase bucket: %v", err)
+			initErr = fmt.Errorf("error creating Firebase bucket: %w", err)
 		}
+	case S3BucketType:
+		log.Printf("Initializing S3 bucket: %s in region %s", config.GetEnv("S3_BUCKET_NAME"), config.GetEnv("AWS_REGION"))
+		bucket = &S3Bucket{BucketName: config.GetEnv("S3_BUCKET_NAME")}
 	default:
-		log.Fatalf("Unknown bucket type: %s", bucketType)
+		initErr = fmt.Errorf("unknown bucket type: %s", bucketType)
+	}
+
+	// If initialization failed, fall back to a local bucket
+	if initErr != nil {
+		log.Printf("Error initializing bucket of type %s: %v", bucketType, initErr)
+		log.Printf("Falling back to a local bucket")
+		bucket = NewLocalBucket()
+		bucketInitError = initErr
 	}
 }
 
 func GetBucket() Bucket {
+	if bucketInitError != nil {
+		log.Printf("WARNING: Using fallback bucket due to initialization error: %v", bucketInitError)
+	}
 	return bucket
 }
 
