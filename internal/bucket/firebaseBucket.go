@@ -173,12 +173,22 @@ func (b *FirebaseBucket) GetFile(branch string, runtimeVersion string, updateId 
 }
 
 func (b *FirebaseBucket) UploadFileIntoUpdate(update types.Update, fileName string, content io.Reader) error {
+	// Preserve the full path for the object in Firebase
 	objectPath := path.Join("updates", update.Branch, update.RuntimeVersion, update.UpdateId, fileName)
+
+	// Log the file being uploaded for debugging
+	log.Printf("Uploading file to Firebase storage: %s", objectPath)
+
 	writer := b.bucket.Object(objectPath).NewWriter(context.Background())
 	defer writer.Close()
 
-	_, err := io.Copy(writer, content)
-	return err
+	bytesWritten, err := io.Copy(writer, content)
+	if err != nil {
+		return fmt.Errorf("error uploading file %s to Firebase: %w", fileName, err)
+	}
+
+	log.Printf("Successfully uploaded %d bytes to %s", bytesWritten, objectPath)
+	return nil
 }
 
 func (b *FirebaseBucket) DeleteUpdateFolder(branch string, runtimeVersion string, updateId string) error {

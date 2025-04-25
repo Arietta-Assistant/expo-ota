@@ -287,20 +287,27 @@ func (b *LocalBucket) GetRuntimeVersions(branch string) ([]RuntimeVersionWithSta
 }
 
 func (b *LocalBucket) UploadFileIntoUpdate(update types.Update, fileName string, file io.Reader) error {
+	// Create the full path preserving any directory structure in fileName
 	filePath := filepath.Join(b.BasePath, update.Branch, update.RuntimeVersion, update.UpdateId, fileName)
+
+	// Ensure all parent directories exist
 	err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create directory structure for %s: %w", fileName, err)
 	}
+
 	out, err := os.Create(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create file %s: %w", fileName, err)
 	}
 	defer out.Close()
+
 	_, err = io.Copy(out, file)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to write file %s: %w", fileName, err)
 	}
+
+	log.Printf("Successfully uploaded file to %s", filePath)
 	return nil
 }
 

@@ -87,16 +87,16 @@ export function computeFilesRequests(
     const bundle = metadata.fileMetadata[platform].bundle;
     const bundlePath = path.join(expoDir, bundle);
     if (fs.existsSync(bundlePath)) {
-      assets.push({ path: bundlePath, name: path.basename(bundle), ext: 'hbc' });
+      assets.push({ path: bundlePath, name: bundle, ext: 'hbc' });
     } else {
-      assets.push({ path: path.join(distDir, bundle), name: path.basename(bundle), ext: 'hbc' });
+      assets.push({ path: path.join(distDir, bundle), name: bundle, ext: 'hbc' });
     }
     for (const asset of metadata.fileMetadata[platform].assets) {
       const assetPath = path.join(expoDir, asset.path);
       if (fs.existsSync(assetPath)) {
-        assets.push({ path: assetPath, name: path.basename(asset.path), ext: asset.ext });
+        assets.push({ path: assetPath, name: asset.path, ext: asset.ext });
       } else {
-        assets.push({ path: path.join(distDir, asset.path), name: path.basename(asset.path), ext: asset.ext });
+        assets.push({ path: path.join(distDir, asset.path), name: asset.path, ext: asset.ext });
       }
     }
   }
@@ -149,12 +149,14 @@ export async function requestUploadUrls({
     queryParams.append('buildNumber', buildNumber);
   }
 
+  // Don't strip path information from filenames - send the full paths to ensure
+  // the correct directory structure on the server
   const response = await fetch(
     `${requestUploadUrl}?${queryParams.toString()}`,
     {
       method: 'POST',
       headers,
-      body: JSON.stringify({ fileNames: body.fileNames.map(f => path.basename(f)) }),
+      body: JSON.stringify({ fileNames: body.fileNames }),
     }
   );
   if (!response.ok) {

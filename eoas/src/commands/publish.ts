@@ -180,6 +180,9 @@ export default class Publish extends Command {
         const fileContent = await fs.readFile(file.path);
         const contentType = mime.getType(file.path) || 'application/octet-stream';
         
+        // Log information about file being uploaded
+        spinner.text = `Uploading ${file.name} (${fileContent.length} bytes)`;
+        
         try {
           // Use the raw https module for better control over the request
           await new Promise<void>((resolve, reject) => {

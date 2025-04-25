@@ -425,7 +425,48 @@ func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset b
 		return manifestAsset, nil
 	}
 	resolvedBucket := bucket.GetBucket()
-	assetFile, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, asset.Path)
+
+	// Path to try
+	assetPath := asset.Path
+
+	// Try to get the file at specified path
+	assetFile, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, assetPath)
+
+	// If file not found and it's a bundle file, try alternate locations
+	if err != nil && isLaunchAsset {
+		log.Printf("Bundle file not found at path %s, trying alternative locations", assetPath)
+
+		// Try common alternative locations
+		alternativePaths := []string{
+			// Custom path for app bundles
+			fmt.Sprintf("bundles/%s-bundle.js", platform),
+			// Default names
+			"bundle.js",
+			"index.js",
+			fmt.Sprintf("%s-bundle.js", platform),
+		}
+
+		// Try extracting filename from the path and looking for it directly
+		parts := strings.Split(assetPath, "/")
+		if len(parts) > 0 {
+			filename := parts[len(parts)-1]
+			alternativePaths = append(alternativePaths, filename)
+		}
+
+		// Try each alternative path
+		for _, altPath := range alternativePaths {
+			log.Printf("Trying alternative path for bundle: %s", altPath)
+			altFile, altErr := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, altPath)
+			if altErr == nil {
+				log.Printf("Found bundle at alternative path: %s", altPath)
+				assetFile = altFile
+				assetPath = altPath // Update the path for URL generation
+				err = nil
+				break
+			}
+		}
+	}
+
 	if err != nil {
 		return types.ManifestAsset{}, err
 	}
@@ -456,7 +497,7 @@ func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset b
 	if isLaunchAsset {
 		contentType = mime.TypeByExtension(asset.Ext)
 	}
-	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), asset.Path, update.RuntimeVersion, platform)
+	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), assetPath, update.RuntimeVersion, platform)
 	if errUrl != nil {
 		return types.ManifestAsset{}, errUrl
 	}
@@ -499,9 +540,21 @@ func ComposeUpdateManifest(
 	switch platform {
 	case "ios":
 		platformSpecificMetadata = metadata.MetadataJSON.FileMetadata.IOS
+		log.Printf("DEBUG: iOS bundle path: %s", platformSpecificMetadata.Bundle)
 	case "android":
 		platformSpecificMetadata = metadata.MetadataJSON.FileMetadata.Android
+		log.Printf("DEBUG: Android bundle path: %s", platformSpecificMetadata.Bundle)
 	}
+
+	// Debug log all metadata
+	metadataBytes, _ := json.MarshalIndent(metadata.MetadataJSON, "", "  ")
+	log.Printf("DEBUG: Complete metadata for update %s:\n%s", update.UpdateId, string(metadataBytes))
+
+	if platformSpecificMetadata.Bundle == "" {
+		log.Printf("ERROR: Missing bundle path for platform %s in update %s", platform, update.UpdateId)
+		return types.UpdateManifest{}, fmt.Errorf("missing bundle path for platform %s", platform)
+	}
+
 	var (
 		assets = make([]types.ManifestAsset, len(platformSpecificMetadata.Assets))
 		errs   = make(chan error, len(platformSpecificMetadata.Assets))
