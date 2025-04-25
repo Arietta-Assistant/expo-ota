@@ -69,12 +69,32 @@ func MarkUpdateAsChecked(update types.Update) error {
 
 func IsUpdateValid(Update types.Update) bool {
 	resolvedBucket := bucket.GetBucket()
-	// Search for .check file in the update
-	file, err := resolvedBucket.GetFile(Update.Branch, Update.RuntimeVersion, Update.UpdateId, ".check")
+	// Search for metadata.json file in the update instead of .check
+	file, err := resolvedBucket.GetFile(Update.Branch, Update.RuntimeVersion, Update.UpdateId, "metadata.json")
 	if err == nil && file != nil {
 		defer file.Close()
+		log.Printf("VALID UPDATE: %s (found metadata.json)", Update.UpdateId)
 		return true
 	}
+
+	// Try alternate metadata file name
+	file, err = resolvedBucket.GetFile(Update.Branch, Update.RuntimeVersion, Update.UpdateId, "update-metadata.json")
+	if err == nil && file != nil {
+		defer file.Close()
+		log.Printf("VALID UPDATE: %s (found update-metadata.json)", Update.UpdateId)
+		return true
+	}
+
+	// Try bundle.js as another fallback
+	file, err = resolvedBucket.GetFile(Update.Branch, Update.RuntimeVersion, Update.UpdateId, "bundle.js")
+	if err == nil && file != nil {
+		defer file.Close()
+		log.Printf("VALID UPDATE: %s (found bundle.js)", Update.UpdateId)
+		return true
+	}
+
+	// Log detailed error for debugging
+	log.Printf("Update %s validation failed: cannot find metadata or bundle files", Update.UpdateId)
 	return false
 }
 
