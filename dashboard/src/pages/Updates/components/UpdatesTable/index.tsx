@@ -60,10 +60,11 @@ export const UpdatesTable = ({
             header: 'ID',
             accessorKey: 'updateId',
             cell: value => {
+              const updateId = value.row.original?.updateId || 'Unknown';
               return (
                 <span className="flex flex-row gap-2 items-center w-full">
                   <Rss className="w-4" />
-                  {value.row.original.updateId}
+                  {updateId}
                 </span>
               );
             },
@@ -72,19 +73,21 @@ export const UpdatesTable = ({
             header: 'UUID',
             accessorKey: 'updateUUID',
             cell: value => {
-              return value.row.original.updateUUID;
+              return value.row.original?.updateUUID || 'N/A';
             },
           },
           {
             header: 'Platform',
             accessorKey: 'platform',
             cell: value => {
-              const isIos = value.row.original.platform === 'ios';
-              const isAndroid = value.row.original.platform === 'android';
+              const platform = value.row.original?.platform || '';
+              const isIos = platform === 'ios';
+              const isAndroid = platform === 'android';
               return (
                 <div className="flex flex-row items-center gap-2">
                   {isIos && <img src="@/assets/apple.svg" className="w-4" alt="apple" />}
                   {isAndroid && <img src="@/assets/android.svg" className="w-4" alt="android" />}
+                  {!isIos && !isAndroid && <span>Unknown</span>}
                 </div>
               );
             },
@@ -93,9 +96,13 @@ export const UpdatesTable = ({
             header: 'Commit',
             accessorKey: 'commitHash',
             cell: value => {
+              const commitHash = value.row.original?.commitHash;
+              if (!commitHash) {
+                return <Badge variant="secondary" className="text-xs">N/A</Badge>;
+              }
               return (
                 <Badge variant="secondary" className="text-xs">
-                  {value.row.original.commitHash.slice(0, 7)}
+                  {typeof commitHash === 'string' ? commitHash.slice(0, 7) : commitHash}
                 </Badge>
               );
             },
@@ -104,19 +111,32 @@ export const UpdatesTable = ({
             header: 'Published at',
             accessorKey: 'createdAt',
             cell: ({ row }) => {
-              const date = new Date(row.original.createdAt);
-              return (
-                <Badge variant="outline">
-                  {date.toLocaleDateString('en-GB', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: 'numeric',
-                    second: 'numeric',
-                  })}
-                </Badge>
-              );
+              const createdAt = row.original?.createdAt;
+              if (!createdAt) {
+                return <Badge variant="outline">Unknown</Badge>;
+              }
+              
+              try {
+                const date = new Date(createdAt);
+                if (isNaN(date.getTime())) {
+                  return <Badge variant="outline">Invalid date</Badge>;
+                }
+                
+                return (
+                  <Badge variant="outline">
+                    {date.toLocaleDateString('en-GB', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: 'numeric',
+                      second: 'numeric',
+                    })}
+                  </Badge>
+                );
+              } catch {
+                return <Badge variant="outline">Invalid date</Badge>;
+              }
             },
           },
         ]}
