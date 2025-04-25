@@ -26,3 +26,10 @@ The full documentation is available at:
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE.md) file for details.
+
+
+
+## Rebuild the eoas cli locally for eoas updates publishing
+
+
+root cd eoas && npm run build

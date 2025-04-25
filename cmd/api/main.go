@@ -5,11 +5,15 @@ import (
 	"expo-open-ota/internal/metrics"
 	infrastructure "expo-open-ota/internal/router"
 	"log"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
 
 func init() {
+	// Enable the dashboard
+	os.Setenv("USE_DASHBOARD", "true")
+
 	config.LoadConfig()
 	metrics.InitMetrics()
 	gin.SetMode(gin.ReleaseMode)
