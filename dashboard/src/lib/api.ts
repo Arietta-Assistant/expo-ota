@@ -89,7 +89,7 @@ export class ApiClient {
         createdAt: string;
         numberOfUpdates: number;
       }[]
-    >(`/api/branch/${branch}/runtimeVersions`, {
+    >(`/api/runtime-versions/${branch}`, {
       method: 'GET',
     });
   }
@@ -102,7 +102,7 @@ export class ApiClient {
         platform: string;
         commitHash: string;
       }[]
-    >(`/api/branch/${branch}/runtimeVersion/${runtimeVersion}/updates`, {
+    >(`/api/updates/${branch}/${runtimeVersion}`, {
       method: 'GET',
     });
   }
