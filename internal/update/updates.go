@@ -198,20 +198,8 @@ func GetLatestUpdateBundlePathForRuntimeVersion(branch string, runtimeVersion st
 	}
 
 	log.Printf("Searching for updates in branch=%s, runtimeVersion=%s, buildNumber=%s", branch, runtimeVersion, buildNumber)
-	log.Printf("Looking for specific update ID starting with build-7-")
 
-	if cachedValue := cache.Get(cacheKey); cachedValue != "" {
-		var update types.Update
-		err := json.Unmarshal([]byte(cachedValue), &update)
-		if err != nil {
-			log.Printf("Error parsing cached update: %v", err)
-			return nil, err
-		}
-		log.Printf("USING CACHED UPDATE: %s", update.UpdateId)
-		return &update, nil
-	}
-
-	log.Printf("No cached update found, getting all updates for %s/%s", branch, runtimeVersion)
+	// Get all updates regardless of cache to ensure we find the latest build
 	updates, err := GetAllUpdatesForRuntimeVersion(branch, runtimeVersion)
 	if err != nil {
 		log.Printf("Error getting updates: %v", err)
@@ -224,16 +212,42 @@ func GetLatestUpdateBundlePathForRuntimeVersion(branch string, runtimeVersion st
 		log.Printf("Update #%d: ID=%s, CreatedAt=%v", i+1, update.UpdateId, update.CreatedAt)
 	}
 
+	// Check if we have any updates with higher build numbers
+	highestBuildUpdate := (*types.Update)(nil)
+	highestBuildNum := -1
+
+	// Only check cache if we're not forcing a refresh
+	if cachedValue := cache.Get(cacheKey); cachedValue != "" {
+		var cachedUpdate types.Update
+		err := json.Unmarshal([]byte(cachedValue), &cachedUpdate)
+		if err == nil {
+			log.Printf("Found cached update: %s", cachedUpdate.UpdateId)
+			cachedBuildNum := extractBuildNumber(cachedUpdate.UpdateId)
+			if cachedBuildNum > 0 {
+				highestBuildNum = cachedBuildNum
+				highestBuildUpdate = &cachedUpdate
+			}
+		} else {
+			log.Printf("Error parsing cached update: %v", err)
+		}
+	}
+
+	// Process all updates to find the highest build number
 	filteredUpdates := make([]types.Update, 0)
 	for _, update := range updates {
-		// Specifically check for build-7 update
-		if strings.HasPrefix(update.UpdateId, "build-7-") {
-			log.Printf("FOUND TARGET UPDATE: %s", update.UpdateId)
-		}
+		// Check if this update has a higher build number
+		buildNum := extractBuildNumber(update.UpdateId)
+		log.Printf("Checking update: %s (build number: %d)", update.UpdateId, buildNum)
 
 		if IsUpdateValid(update) {
 			filteredUpdates = append(filteredUpdates, update)
 			log.Printf("VALID UPDATE: %s", update.UpdateId)
+
+			if buildNum > highestBuildNum {
+				log.Printf("Found higher build number: %d > %d", buildNum, highestBuildNum)
+				highestBuildNum = buildNum
+				highestBuildUpdate = &update
+			}
 		} else {
 			log.Printf("INVALID UPDATE: %s", update.UpdateId)
 		}
@@ -247,10 +261,17 @@ func GetLatestUpdateBundlePathForRuntimeVersion(branch string, runtimeVersion st
 
 	log.Printf("Found %d valid updates", len(filteredUpdates))
 
-	// Just return the latest update (first in the sorted list)
-	latest := &filteredUpdates[0]
-	log.Printf("SELECTED UPDATE: %s", latest.UpdateId)
+	// Use the highest build update if found, otherwise use the first valid update
+	var latest *types.Update
+	if highestBuildUpdate != nil {
+		latest = highestBuildUpdate
+		log.Printf("SELECTED UPDATE WITH HIGHEST BUILD NUMBER: %s (build %d)", latest.UpdateId, highestBuildNum)
+	} else {
+		latest = &filteredUpdates[0]
+		log.Printf("SELECTED UPDATE (first in sorted list): %s", latest.UpdateId)
+	}
 
+	// Update the cache with the latest update
 	cacheValue, _ := json.Marshal(*latest)
 	ttl := 1800
 	_ = cache.Set(cacheKey, string(cacheValue), &ttl)
