@@ -17,13 +17,14 @@ import (
 
 	"cloud.google.com/go/storage"
 	firebase "firebase.google.com/go/v4"
+	firebaseStorage "firebase.google.com/go/v4/storage"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
 type FirebaseBucket struct {
-	client *storage.Client
-	bucket *storage.BucketHandle
+	firebaseClient *firebaseStorage.Client
+	bucket         *storage.BucketHandle
 }
 
 func NewFirebaseBucket() (*FirebaseBucket, error) {
@@ -51,7 +52,7 @@ func NewFirebaseBucket() (*FirebaseBucket, error) {
 		}
 
 		// Get the storage client
-		client, err := app.Storage(ctx)
+		firebaseClient, err := app.Storage(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("error initializing Firebase storage client: %w", err)
 		}
@@ -63,15 +64,15 @@ func NewFirebaseBucket() (*FirebaseBucket, error) {
 			log.Printf("FIREBASE_STORAGE_BUCKET not set, using default: %s", bucketName)
 		}
 
-		bucket, err := client.Bucket(bucketName)
+		bucket, err := firebaseClient.Bucket(bucketName)
 		if err != nil {
 			return nil, fmt.Errorf("error accessing Firebase storage bucket: %w", err)
 		}
 
 		log.Printf("Successfully initialized Firebase bucket using project ID: %s", projectID)
 		return &FirebaseBucket{
-			client: client,
-			bucket: bucket,
+			firebaseClient: firebaseClient,
+			bucket:         bucket,
 		}, nil
 	}
 
@@ -88,7 +89,7 @@ func NewFirebaseBucket() (*FirebaseBucket, error) {
 	}
 
 	// Get storage client
-	client, err := app.Storage(ctx)
+	firebaseClient, err := app.Storage(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing Firebase storage client: %w", err)
 	}
@@ -110,15 +111,15 @@ func NewFirebaseBucket() (*FirebaseBucket, error) {
 		}
 	}
 
-	bucket, err := client.Bucket(bucketName)
+	bucket, err := firebaseClient.Bucket(bucketName)
 	if err != nil {
 		return nil, fmt.Errorf("error accessing Firebase storage bucket: %w", err)
 	}
 
 	log.Printf("Successfully initialized Firebase bucket using service account credentials")
 	return &FirebaseBucket{
-		client: client,
-		bucket: bucket,
+		firebaseClient: firebaseClient,
+		bucket:         bucket,
 	}, nil
 }
 
