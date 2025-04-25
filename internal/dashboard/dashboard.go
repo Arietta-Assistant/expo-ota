@@ -59,9 +59,28 @@ func GetDashboardConfig() DashboardConfig {
 	}
 }
 
-func GetBranches() ([]string, error) {
+type Branch struct {
+	BranchName     string `json:"branchName"`
+	ReleaseChannel string `json:"releaseChannel,omitempty"`
+}
+
+func GetBranches() ([]Branch, error) {
 	resolvedBucket := bucket.GetBucket()
-	return resolvedBucket.GetBranches()
+	branchNames, err := resolvedBucket.GetBranches()
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert string array to array of Branch objects
+	branches := make([]Branch, len(branchNames))
+	for i, name := range branchNames {
+		branches[i] = Branch{
+			BranchName: name,
+			// ReleaseChannel is empty by default
+		}
+	}
+
+	return branches, nil
 }
 
 func GetRuntimeVersions(branch string) ([]bucket.RuntimeVersionWithStats, error) {

@@ -4,7 +4,7 @@ export class ApiClient {
   private baseUrl: string;
 
   constructor() {
-    // @ts-ignore
+    // @ts-expect-error - window.env is defined in index.html
     this.baseUrl = window?.env?.VITE_OTA_API_URL || import.meta.env.VITE_OTA_API_URL;
     if (!this.baseUrl) {
       throw new Error('Missing VITE_OTA_API_URL environment variable');

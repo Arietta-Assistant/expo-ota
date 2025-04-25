@@ -105,6 +105,8 @@ func GetBranchesHandler(c *gin.Context) {
 		return
 	}
 	log.Printf("Found %d branches", len(branches))
+
+	// Return the branches directly (no need for any transformation)
 	c.JSON(http.StatusOK, branches)
 }
 
