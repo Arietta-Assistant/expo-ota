@@ -3,6 +3,7 @@ package handlers
 import (
 	"expo-open-ota/internal/bucket"
 	"expo-open-ota/internal/config"
+	"expo-open-ota/internal/update"
 	"io"
 	"log"
 	"net/http"
@@ -15,9 +16,29 @@ import (
 func AssetsHandler(c *gin.Context) {
 	// Get the path from the URL
 	path := c.Param("path")
+
 	if path == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No path provided"})
-		return
+		// If path param is empty, try to get it from query parameters (for backward compatibility)
+		assetPath := c.Query("asset")
+		runtimeVersion := c.Query("runtimeVersion")
+		platform := c.Query("platform")
+
+		if assetPath == "" || runtimeVersion == "" || platform == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required parameters: asset, runtimeVersion, or platform"})
+			return
+		}
+
+		// Get the latest update for this runtime version
+		update, err := update.GetLatestUpdateBundlePathForRuntimeVersion("ota-updates", runtimeVersion, "")
+		if err != nil || update == nil {
+			log.Printf("Error getting update for runtime version %s: %v", runtimeVersion, err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Update not found"})
+			return
+		}
+
+		// Construct the path using the branch, runtimeVersion, and updateId from the retrieved update
+		path = strings.Join([]string{update.Branch, update.RuntimeVersion, update.UpdateId, assetPath}, "/")
+		log.Printf("Constructed path from query parameters: %s", path)
 	}
 
 	// Parse the path to get branch, runtimeVersion, updateId, and fileName
@@ -31,6 +52,10 @@ func AssetsHandler(c *gin.Context) {
 	runtimeVersion := parts[1]
 	updateId := parts[2]
 	fileName := strings.Join(parts[3:], "/")
+
+	// Log the request for debugging
+	log.Printf("Serving asset: branch=%s, runtimeVersion=%s, updateId=%s, fileName=%s",
+		branch, runtimeVersion, updateId, fileName)
 
 	// Get bucket type from environment
 	bucketType := config.GetEnv("BUCKET_TYPE")

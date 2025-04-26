@@ -400,11 +400,8 @@ func BuildFinalManifestAssetUrlURL(baseURL, assetFilePath, runtimeVersion, platf
 		return "", fmt.Errorf("invalid base URL: %w", err)
 	}
 
-	query := url.Values{}
-	query.Set("asset", assetFilePath)
-	query.Set("runtimeVersion", runtimeVersion)
-	query.Set("platform", platform)
-	parsedURL.RawQuery = query.Encode()
+	// Directly append the path instead of using query parameters
+	parsedURL.Path = parsedURL.Path + "/" + url.PathEscape(assetFilePath)
 
 	return parsedURL.String(), nil
 }
