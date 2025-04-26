@@ -410,7 +410,7 @@ func BuildFinalManifestAssetUrlURL(baseURL, assetFilePath, runtimeVersion, platf
 }
 
 func GetAssetEndpoint() string {
-	return config.GetEnv("BASE_URL") + "/assets"
+	return config.GetEnv("BASE_URL") + "/api/update/assets"
 }
 
 func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset bool, platform string) (types.ManifestAsset, error) {
