@@ -14,9 +14,15 @@ func MarkUpdateAsUploadedHandler(c *gin.Context) {
 	runtimeVersion := c.Query("runtimeVersion")
 	updateId := c.Query("updateId")
 
-	if platform == "" || (platform != "ios" && platform != "android") {
+	if platform == "" || (platform != "ios" && platform != "android" && platform != "all") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform"})
 		return
+	}
+
+	// If platform is "all", default to iOS for processing
+	if platform == "all" {
+		log.Printf("Platform 'all' specified in mark update request, using 'ios'")
+		platform = "ios"
 	}
 
 	if branchName == "" {

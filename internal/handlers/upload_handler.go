@@ -26,7 +26,7 @@ func UploadHandler(c *gin.Context) {
 	branchName := c.Param("BRANCH")
 	platform := c.Query("platform")
 
-	if platform == "" || (platform != "ios" && platform != "android") {
+	if platform == "" || (platform != "ios" && platform != "android" && platform != "all") {
 		log.Printf("[RequestID: %s] Invalid platform: %s", requestID, platform)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform"})
 		return
@@ -55,6 +55,12 @@ func UploadHandler(c *gin.Context) {
 			decodedToken.UID,
 			decodedToken.Claims["email"],
 			branchName)
+	}
+
+	// If platform is "all", we'll use "ios" as the default for storage
+	if platform == "all" {
+		log.Printf("[RequestID: %s] Platform 'all' specified, using 'ios' as the primary platform", requestID)
+		platform = "ios"
 	}
 
 	// Process the upload
@@ -92,11 +98,18 @@ func RequestUploadLocalFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform := r.URL.Query().Get("platform")
-	if platform == "" || (platform != "ios" && platform != "android") {
+	if platform == "" || (platform != "ios" && platform != "android" && platform != "all") {
 		log.Printf("[RequestID: %s] Invalid platform: %s", requestID, platform)
 		http.Error(w, "Invalid platform", http.StatusBadRequest)
 		return
 	}
+
+	// If platform is "all", we'll use "ios" as the default for storage
+	if platform == "all" {
+		log.Printf("[RequestID: %s] Platform 'all' specified, using 'ios' as the primary platform", requestID)
+		platform = "ios"
+	}
+
 	runtimeVersion := r.URL.Query().Get("runtimeVersion")
 	if runtimeVersion == "" {
 		log.Printf("[RequestID: %s] No runtime version provided", requestID)
@@ -208,10 +221,17 @@ func RequestUploadUrlHandler(c *gin.Context) {
 	}
 
 	platform := c.Query("platform")
-	if platform == "" || (platform != "ios" && platform != "android") {
+	if platform == "" || (platform != "ios" && platform != "android" && platform != "all") {
 		log.Printf("[RequestID: %s] Invalid platform: %s", requestID, platform)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform"})
 		return
+	}
+
+	// If platform is "all", we'll use "ios" as the default for storage
+	// The client will upload both iOS and Android assets
+	if platform == "all" {
+		log.Printf("[RequestID: %s] Platform 'all' specified, using 'ios' as the primary platform for metadata", requestID)
+		platform = "ios"
 	}
 
 	commitHash := c.Query("commitHash")

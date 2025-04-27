@@ -36,7 +36,7 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		return AssetsResponse{StatusCode: http.StatusBadRequest, Body: []byte("No asset name provided")}, nil, "", nil
 	}
 
-	if req.Platform == "" || (req.Platform != "ios" && req.Platform != "android") {
+	if req.Platform == "" || (req.Platform != "ios" && req.Platform != "android" && req.Platform != "all") {
 		log.Printf("[RequestID: %s] Invalid platform: %s", requestID, req.Platform)
 		return AssetsResponse{StatusCode: http.StatusBadRequest, Body: []byte("Invalid platform")}, nil, "", nil
 	}
@@ -70,8 +70,14 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		return AssetsResponse{StatusCode: http.StatusInternalServerError, Body: []byte("Error getting metadata")}, nil, "", nil
 	}
 
+	actualPlatform := req.Platform
+	if req.Platform == "all" {
+		log.Printf("[RequestID: %s] Platform 'all' specified in asset request, using 'ios'", requestID)
+		actualPlatform = "ios"
+	}
+
 	var platformMetadata types.PlatformMetadata
-	switch req.Platform {
+	switch actualPlatform {
 	case "android":
 		platformMetadata = metadata.MetadataJSON.FileMetadata.Android
 	case "ios":
