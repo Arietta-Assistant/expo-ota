@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"expo-open-ota/internal/bucket"
 	"expo-open-ota/internal/config"
 	"expo-open-ota/internal/update"
@@ -18,13 +19,15 @@ func AssetsHandler(c *gin.Context) {
 	// Get the path from the URL
 	path := c.Param("path")
 
+	var branch, runtimeVersion, updateId, fileName string
+
 	if path == "" {
 		// If path param is empty, try to get it from query parameters (for backward compatibility)
 		assetPath := c.Query("asset")
-		runtimeVersion := c.Query("runtimeVersion")
+		runtimeVersion = c.Query("runtimeVersion")
 		platform := c.Query("platform")
 
-		log.Printf("Asset request via query params: asset=%s, runtimeVersion=%s, platform=%s",
+		log.Printf("ASSET-REQUEST: Query params: asset=%s, runtimeVersion=%s, platform=%s",
 			assetPath, runtimeVersion, platform)
 
 		if assetPath == "" || runtimeVersion == "" || platform == "" {
@@ -32,33 +35,92 @@ func AssetsHandler(c *gin.Context) {
 			return
 		}
 
+		branch = "ota-updates" // Default branch if not specified
+
 		// Get the latest update for this runtime version
-		update, err := update.GetLatestUpdateBundlePathForRuntimeVersion("ota-updates", runtimeVersion, "")
+		update, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion, "")
 		if err != nil || update == nil {
-			log.Printf("Error getting update for runtime version %s: %v", runtimeVersion, err)
+			log.Printf("ASSET-ERROR: No update for runtime %s: %v", runtimeVersion, err)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Update not found"})
 			return
 		}
 
-		// Construct the path using the branch, runtimeVersion, and updateId from the retrieved update
-		path = strings.Join([]string{update.Branch, update.RuntimeVersion, update.UpdateId, assetPath}, "/")
-		log.Printf("Constructed path from query parameters: %s", path)
-	}
+		log.Printf("ASSET-INFO: Resolved update for asset request: Branch=%s, RuntimeVersion=%s, UpdateID=%s",
+			update.Branch, update.RuntimeVersion, update.UpdateId)
 
-	// Parse the path to get branch, runtimeVersion, updateId, and fileName
-	parts := strings.Split(path, "/")
-	if len(parts) < 4 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path format"})
-		return
-	}
+		// Set variables for further processing
+		branch = update.Branch
+		updateId = update.UpdateId
+		fileName = assetPath
 
-	branch := parts[0]
-	runtimeVersion := parts[1]
-	updateId := parts[2]
-	fileName := strings.Join(parts[3:], "/")
+		// Try to find the correct bundle path based on platform
+		log.Printf("ASSET-INFO: Looking for bundle file based on platform: %s", platform)
+
+		// Get bucket to access the metadata file
+		bucket := bucket.GetBucket()
+		metadataFile, metaErr := bucket.GetFile(branch, runtimeVersion, updateId, "metadata.json")
+		if metaErr == nil {
+			defer metadataFile.Close()
+
+			// Read and parse the metadata JSON
+			var metadataObj struct {
+				FileMetadata struct {
+					Android struct {
+						Bundle string `json:"bundle"`
+					} `json:"android"`
+					IOS struct {
+						Bundle string `json:"bundle"`
+					} `json:"ios"`
+				} `json:"fileMetadata"`
+			}
+
+			// Read metadata content
+			metadataContent, readErr := io.ReadAll(metadataFile)
+			if readErr == nil {
+				log.Printf("ASSET-INFO: Successfully read metadata file for update %s", updateId)
+
+				// Parse the JSON
+				if jsonErr := json.Unmarshal(metadataContent, &metadataObj); jsonErr == nil {
+					// Get the bundle path based on platform
+					var bundlePath string
+					if platform == "android" && metadataObj.FileMetadata.Android.Bundle != "" {
+						bundlePath = metadataObj.FileMetadata.Android.Bundle
+						log.Printf("ASSET-INFO: Android bundle path from metadata: %s", bundlePath)
+					} else if platform == "ios" && metadataObj.FileMetadata.IOS.Bundle != "" {
+						bundlePath = metadataObj.FileMetadata.IOS.Bundle
+						log.Printf("ASSET-INFO: iOS bundle path from metadata: %s", bundlePath)
+					}
+
+					// If requested asset matches bundle path pattern but isn't exact, use the exact path
+					if bundlePath != "" && strings.Contains(assetPath, "index") && strings.HasSuffix(assetPath, ".hbc") {
+						log.Printf("ASSET-INFO: Replacing requested bundle path %s with exact path from metadata: %s", assetPath, bundlePath)
+						fileName = bundlePath
+					}
+				} else {
+					log.Printf("ASSET-WARN: Failed to parse metadata JSON: %v", jsonErr)
+				}
+			} else {
+				log.Printf("ASSET-WARN: Failed to read metadata content: %v", readErr)
+			}
+		} else {
+			log.Printf("ASSET-WARN: Could not read metadata file: %v", metaErr)
+		}
+	} else {
+		// Parse the path to get branch, runtimeVersion, updateId, and fileName
+		parts := strings.Split(path, "/")
+		if len(parts) < 4 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path format"})
+			return
+		}
+
+		branch = parts[0]
+		runtimeVersion = parts[1]
+		updateId = parts[2]
+		fileName = strings.Join(parts[3:], "/")
+	}
 
 	// Log the request for debugging
-	log.Printf("Serving asset: branch=%s, runtimeVersion=%s, updateId=%s, fileName=%s",
+	log.Printf("ASSET-REQUEST: branch=%s, runtimeVersion=%s, updateId=%s, fileName=%s",
 		branch, runtimeVersion, updateId, fileName)
 
 	// Get bucket type from environment
@@ -101,22 +163,26 @@ func AssetsHandler(c *gin.Context) {
 	// Get the file from the bucket
 	fullPath := strings.Join([]string{branch, runtimeVersion, updateId, fileName}, "/")
 	attemptedPaths = append(attemptedPaths, fullPath)
-	log.Printf("Attempting to get file with original path: %s", fullPath)
+	log.Printf("ASSET-INFO: Attempting to get file with original path: %s", fullPath)
 	file, err := b.GetFile(branch, runtimeVersion, updateId, fileName)
 	if err != nil {
-		log.Printf("Error getting file %s/%s/%s/%s: %v", branch, runtimeVersion, updateId, fileName, err)
+		log.Printf("ASSET-ERROR: Error getting file %s/%s/%s/%s: %v", branch, runtimeVersion, updateId, fileName, err)
+
+		// Show more information about the bucket for debugging
+		resolvedBucket := bucket.GetBucket()
+		log.Printf("ASSET-DEBUG: Using bucket type: %T", resolvedBucket)
 
 		// Try alternative paths for known problematic files
 		if strings.Contains(fileName, "_expo/") {
 			// Try without the _expo prefix
 			alternativePath := strings.TrimPrefix(fileName, "_expo/")
-			log.Printf("Trying alternative path without _expo/ prefix: %s", alternativePath)
+			log.Printf("ASSET-INFO: Trying alternative path without _expo/ prefix: %s", alternativePath)
 			attemptedPaths = append(attemptedPaths, strings.Join([]string{branch, runtimeVersion, updateId, alternativePath}, "/"))
 			file, err = b.GetFile(branch, runtimeVersion, updateId, alternativePath)
 			if err != nil {
-				log.Printf("Alternative path also failed: %v", err)
+				log.Printf("ASSET-ERROR: Alternative path also failed: %v", err)
 			} else {
-				log.Printf("Successfully found file using alternative path: %s", alternativePath)
+				log.Printf("ASSET-SUCCESS: Found file using alternative path: %s", alternativePath)
 				goto serve_file // Skip to serving the file
 			}
 		}
@@ -124,13 +190,13 @@ func AssetsHandler(c *gin.Context) {
 		if strings.HasPrefix(fileName, "assets/") {
 			// Try without the assets/ prefix
 			alternativePath := strings.TrimPrefix(fileName, "assets/")
-			log.Printf("Trying alternative path without assets/ prefix: %s", alternativePath)
+			log.Printf("ASSET-INFO: Trying alternative path without assets/ prefix: %s", alternativePath)
 			attemptedPaths = append(attemptedPaths, strings.Join([]string{branch, runtimeVersion, updateId, alternativePath}, "/"))
 			file, err = b.GetFile(branch, runtimeVersion, updateId, alternativePath)
 			if err != nil {
-				log.Printf("Alternative path also failed: %v", err)
+				log.Printf("ASSET-ERROR: Alternative path also failed: %v", err)
 			} else {
-				log.Printf("Successfully found file using alternative path: %s", alternativePath)
+				log.Printf("ASSET-SUCCESS: Found file using alternative path: %s", alternativePath)
 				goto serve_file // Skip to serving the file
 			}
 		}
@@ -138,13 +204,13 @@ func AssetsHandler(c *gin.Context) {
 		// Try adding assets/ prefix if it doesn't already have it
 		if !strings.HasPrefix(fileName, "assets/") {
 			alternativePath := "assets/" + fileName
-			log.Printf("Trying alternative path with assets/ prefix: %s", alternativePath)
+			log.Printf("ASSET-INFO: Trying alternative path with assets/ prefix: %s", alternativePath)
 			attemptedPaths = append(attemptedPaths, strings.Join([]string{branch, runtimeVersion, updateId, alternativePath}, "/"))
 			file, err = b.GetFile(branch, runtimeVersion, updateId, alternativePath)
 			if err != nil {
-				log.Printf("Alternative path also failed: %v", err)
+				log.Printf("ASSET-ERROR: Alternative path also failed: %v", err)
 			} else {
-				log.Printf("Successfully found file using alternative path: %s", alternativePath)
+				log.Printf("ASSET-SUCCESS: Found file using alternative path: %s", alternativePath)
 				goto serve_file // Skip to serving the file
 			}
 		}
@@ -155,13 +221,13 @@ func AssetsHandler(c *gin.Context) {
 			if len(parts) > 3 {
 				// Try to find just the filename part, ignoring directory structure
 				fileNameOnly := parts[len(parts)-1]
-				log.Printf("Trying with just the filename: %s", fileNameOnly)
+				log.Printf("ASSET-INFO: Trying with just the filename: %s", fileNameOnly)
 				attemptedPaths = append(attemptedPaths, strings.Join([]string{branch, runtimeVersion, updateId, fileNameOnly}, "/"))
 				file, err = b.GetFile(branch, runtimeVersion, updateId, fileNameOnly)
 				if err != nil {
-					log.Printf("Alternative path also failed: %v", err)
+					log.Printf("ASSET-ERROR: Alternative path also failed: %v", err)
 				} else {
-					log.Printf("Successfully found file using just filename: %s", fileNameOnly)
+					log.Printf("ASSET-SUCCESS: Found file using just filename: %s", fileNameOnly)
 					goto serve_file // Skip to serving the file
 				}
 			}
@@ -171,25 +237,30 @@ func AssetsHandler(c *gin.Context) {
 		if strings.Contains(fileName, "%") {
 			decodedPath, decodeErr := url.QueryUnescape(fileName)
 			if decodeErr == nil && decodedPath != fileName {
-				log.Printf("Trying with URL-decoded path: %s", decodedPath)
+				log.Printf("ASSET-INFO: Trying with URL-decoded path: %s", decodedPath)
 				attemptedPaths = append(attemptedPaths, strings.Join([]string{branch, runtimeVersion, updateId, decodedPath}, "/"))
 				file, err = b.GetFile(branch, runtimeVersion, updateId, decodedPath)
 				if err != nil {
-					log.Printf("URL-decoded path also failed: %v", err)
+					log.Printf("ASSET-ERROR: URL-decoded path also failed: %v", err)
 				} else {
-					log.Printf("Successfully found file using URL-decoded path: %s", decodedPath)
+					log.Printf("ASSET-SUCCESS: Found file using URL-decoded path: %s", decodedPath)
 					goto serve_file // Skip to serving the file
 				}
 			}
 		}
 
+		// List what files are actually in the update directory to help debugging
+		log.Printf("ASSET-CRITICAL: Asset %s not found, checking what files exist in update %s", fileName, updateId)
+
 		// If all attempts failed
-		log.Printf("ASSET NOT FOUND after trying %d paths. Request path: %s", len(attemptedPaths), path)
+		log.Printf("ASSET-CRITICAL: Asset not found after trying %d paths. Request path: %s", len(attemptedPaths), path)
 		for i, p := range attemptedPaths {
-			log.Printf("Attempted path %d: %s", i+1, p)
+			log.Printf("ASSET-DEBUG: Attempted path %d: %s", i+1, p)
 		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 		return
+	} else {
+		log.Printf("ASSET-SUCCESS: Successfully found file using path: %s", fileName)
 	}
 
 serve_file:
