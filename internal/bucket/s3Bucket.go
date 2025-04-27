@@ -333,3 +333,36 @@ func (b *S3Bucket) RequestUploadUrlsForFileUpdates(branch string, runtimeVersion
 
 	return requests, nil
 }
+
+// ListUpdates returns a list of all update IDs for a specific branch and runtime version
+func (b *S3Bucket) ListUpdates(branch string, runtimeVersion string) ([]string, error) {
+	if b.BucketName == "" {
+		return nil, errors.New("BucketName not set")
+	}
+
+	s3Client, errS3 := services.GetS3Client()
+	if errS3 != nil {
+		return nil, errS3
+	}
+
+	prefix := branch + "/" + runtimeVersion + "/"
+	input := &s3.ListObjectsV2Input{
+		Bucket:    aws.String(b.BucketName),
+		Prefix:    aws.String(prefix),
+		Delimiter: aws.String("/"),
+	}
+
+	resp, err := s3Client.ListObjectsV2(context.TODO(), input)
+	if err != nil {
+		return nil, fmt.Errorf("ListObjectsV2 error: %w", err)
+	}
+
+	var updates []string
+	for _, commonPrefix := range resp.CommonPrefixes {
+		updateID := strings.TrimPrefix(*commonPrefix.Prefix, prefix)
+		updateID = strings.TrimSuffix(updateID, "/")
+		updates = append(updates, updateID)
+	}
+
+	return updates, nil
+}

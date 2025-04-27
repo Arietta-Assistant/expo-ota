@@ -400,3 +400,25 @@ func (b *LocalBucket) RequestUploadUrlsForFileUpdates(branch string, runtimeVers
 
 	return requests, nil
 }
+
+// ListUpdates returns a list of all update IDs for a specific branch and runtime version
+func (b *LocalBucket) ListUpdates(branch string, runtimeVersion string) ([]string, error) {
+	if b.BasePath == "" {
+		return nil, errors.New("BasePath not set")
+	}
+
+	dirPath := filepath.Join(b.BasePath, branch, runtimeVersion)
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return []string{}, nil
+	}
+
+	var updates []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			updates = append(updates, entry.Name())
+		}
+	}
+
+	return updates, nil
+}
