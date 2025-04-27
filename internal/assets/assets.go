@@ -9,6 +9,9 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -53,13 +56,53 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		return AssetsResponse{StatusCode: http.StatusNotFound, Body: []byte("No updates found")}, nil, "", nil
 	}
 
-	// Sort updates by build number or update ID to find the newest one
-	lastUpdate := allUpdates[0] // Default to first one
-	log.Printf("[RequestID: %s] Found %d updates for runtimeVersion: %s", requestID, len(allUpdates), req.RuntimeVersion)
+	// Sort updates by build number (descending order - newest first)
+	sort.Slice(allUpdates, func(i, j int) bool {
+		// Extract build numbers if possible
+		buildNumI := 0
+		buildNumJ := 0
 
-	// For debugging purposes, log all available updates
+		// Try to parse build numbers from BuildNumber field
+		if allUpdates[i].BuildNumber != "" {
+			if num, err := strconv.Atoi(allUpdates[i].BuildNumber); err == nil {
+				buildNumI = num
+			}
+		}
+
+		if allUpdates[j].BuildNumber != "" {
+			if num, err := strconv.Atoi(allUpdates[j].BuildNumber); err == nil {
+				buildNumJ = num
+			}
+		}
+
+		// If both have build numbers, compare them
+		if buildNumI > 0 && buildNumJ > 0 {
+			return buildNumI > buildNumJ // Descending order
+		}
+
+		// If build numbers can't be compared, try to extract from UpdateId for "build-X-..." format
+		if strings.HasPrefix(allUpdates[i].UpdateId, "build-") && strings.HasPrefix(allUpdates[j].UpdateId, "build-") {
+			partsI := strings.SplitN(allUpdates[i].UpdateId, "-", 3)
+			partsJ := strings.SplitN(allUpdates[j].UpdateId, "-", 3)
+
+			if len(partsI) >= 2 && len(partsJ) >= 2 {
+				if numI, err := strconv.Atoi(partsI[1]); err == nil {
+					if numJ, err := strconv.Atoi(partsJ[1]); err == nil {
+						return numI > numJ // Descending order
+					}
+				}
+			}
+		}
+
+		// Default to comparing UpdateId as strings (less reliable)
+		return allUpdates[i].UpdateId > allUpdates[j].UpdateId
+	})
+
+	// For debugging purposes, log all available updates in sorted order
+	log.Printf("[RequestID: %s] Found %d updates for runtimeVersion: %s (sorted newest first)",
+		requestID, len(allUpdates), req.RuntimeVersion)
 	for i, update := range allUpdates {
-		log.Printf("[RequestID: %s] Available update %d: ID=%s, BuildNumber=%s",
+		log.Printf("[RequestID: %s] Sorted update %d: ID=%s, BuildNumber=%s",
 			requestID, i+1, update.UpdateId, update.BuildNumber)
 	}
 
@@ -73,7 +116,7 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		return AssetsResponse{
 			StatusCode: http.StatusOK,
 			Headers:    headers,
-		}, nil, lastUpdate.UpdateId, nil
+		}, nil, allUpdates[0].UpdateId, nil
 	}
 
 	resolvedBucket := bucket.GetBucket()
