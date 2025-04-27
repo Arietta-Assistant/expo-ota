@@ -23,6 +23,9 @@ func AssetsHandler(c *gin.Context) {
 		runtimeVersion := c.Query("runtimeVersion")
 		platform := c.Query("platform")
 
+		log.Printf("Asset request via query params: asset=%s, runtimeVersion=%s, platform=%s",
+			assetPath, runtimeVersion, platform)
+
 		if assetPath == "" || runtimeVersion == "" || platform == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required parameters: asset, runtimeVersion, or platform"})
 			return
@@ -87,10 +90,41 @@ func AssetsHandler(c *gin.Context) {
 	// Get the file from the bucket
 	file, err := b.GetFile(branch, runtimeVersion, updateId, fileName)
 	if err != nil {
-		log.Printf("Error getting file: %v", err)
+		log.Printf("Error getting file %s/%s/%s/%s: %v", branch, runtimeVersion, updateId, fileName, err)
+
+		// Try alternative paths for known problematic files
+		if strings.Contains(fileName, "_expo/") {
+			// Try without the _expo prefix
+			alternativePath := strings.TrimPrefix(fileName, "_expo/")
+			log.Printf("Trying alternative path without _expo/ prefix: %s", alternativePath)
+			file, err = b.GetFile(branch, runtimeVersion, updateId, alternativePath)
+			if err != nil {
+				log.Printf("Alternative path also failed: %v", err)
+			} else {
+				log.Printf("Successfully found file using alternative path: %s", alternativePath)
+				goto serve_file // Skip to serving the file
+			}
+		}
+
+		if strings.HasPrefix(fileName, "assets/") {
+			// Try without the assets/ prefix
+			alternativePath := strings.TrimPrefix(fileName, "assets/")
+			log.Printf("Trying alternative path without assets/ prefix: %s", alternativePath)
+			file, err = b.GetFile(branch, runtimeVersion, updateId, alternativePath)
+			if err != nil {
+				log.Printf("Alternative path also failed: %v", err)
+			} else {
+				log.Printf("Successfully found file using alternative path: %s", alternativePath)
+				goto serve_file // Skip to serving the file
+			}
+		}
+
+		// If all attempts failed
 		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 		return
 	}
+
+serve_file:
 	defer file.Close()
 
 	// Set appropriate headers based on file type
@@ -104,6 +138,8 @@ func AssetsHandler(c *gin.Context) {
 		c.Header("Content-Type", "image/png")
 	case ".jpg", ".jpeg":
 		c.Header("Content-Type", "image/jpeg")
+	case ".hbc":
+		c.Header("Content-Type", "application/octet-stream")
 	default:
 		c.Header("Content-Type", "application/octet-stream")
 	}
