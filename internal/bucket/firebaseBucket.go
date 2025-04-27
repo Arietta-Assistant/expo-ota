@@ -148,9 +148,50 @@ func (b *FirebaseBucket) GetFile(branch string, runtimeVersion string, updateId 
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
 			log.Printf("FIREBASE-DEBUG: File not found: %s", objectPath)
+
+			// Also try with just the asset name in case that's how it's stored
+			if strings.HasPrefix(fileName, "assets/") {
+				alternativePath := path.Join("updates", branch, runtimeVersion, updateId, strings.TrimPrefix(fileName, "assets/"))
+				log.Printf("FIREBASE-DEBUG: Trying alternative path without 'assets/' prefix: %s", alternativePath)
+				altObj := b.bucket.Object(alternativePath)
+				altAttrs, altErr := altObj.Attrs(context.Background())
+				if altErr == nil {
+					log.Printf("FIREBASE-DEBUG: Found file at alternative path with size: %d bytes, created: %v",
+						altAttrs.Size, altAttrs.Created)
+					return b.bucket.Object(alternativePath).NewReader(context.Background())
+				} else {
+					log.Printf("FIREBASE-DEBUG: Alternative path also not found: %s", alternativePath)
+				}
+			}
+
+			// List objects in the directory to debug what's actually there
+			log.Printf("FIREBASE-DEBUG: Listing objects in directory to see what's available")
+			dirPath := path.Join("updates", branch, runtimeVersion, updateId)
+			query := &storage.Query{
+				Prefix: dirPath,
+			}
+			it := b.bucket.Objects(context.Background(), query)
+			count := 0
+			for {
+				attrs, err := it.Next()
+				if err == iterator.Done {
+					break
+				}
+				if err != nil {
+					log.Printf("FIREBASE-DEBUG: Error listing objects: %v", err)
+					break
+				}
+				log.Printf("FIREBASE-DEBUG: Found object: %s", attrs.Name)
+				count++
+				if count >= 20 {
+					log.Printf("FIREBASE-DEBUG: Stopping after 20 objects")
+					break
+				}
+			}
 		} else {
 			log.Printf("FIREBASE-DEBUG: Error checking file existence: %v", err)
 		}
+		return nil, fmt.Errorf("file not found: %s", objectPath)
 	} else {
 		log.Printf("FIREBASE-DEBUG: File exists with size: %d bytes, created: %v", attrs.Size, attrs.Created)
 	}
@@ -841,4 +882,41 @@ func (b *FirebaseBucket) GetDirectMetadata(updateId string) {
 			}
 		}
 	}
+}
+
+// ListUpdates returns a list of all update IDs for a specific branch and runtime version
+func (b *FirebaseBucket) ListUpdates(branch string, runtimeVersion string) ([]string, error) {
+	dirPath := path.Join("updates", branch, runtimeVersion)
+	log.Printf("FIREBASE-DEBUG: Listing updates in %s", dirPath)
+
+	query := &storage.Query{
+		Prefix:    dirPath,
+		Delimiter: "/",
+	}
+
+	updates := []string{}
+	it := b.bucket.Objects(context.Background(), query)
+
+	for {
+		attrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Printf("FIREBASE-DEBUG: Error listing updates: %v", err)
+			return nil, fmt.Errorf("error listing updates: %w", err)
+		}
+
+		// Extract update ID from the path
+		if attrs.Name != "" {
+			parts := strings.Split(attrs.Name, "/")
+			if len(parts) >= 4 {
+				updateID := parts[3]
+				updates = append(updates, updateID)
+				log.Printf("FIREBASE-DEBUG: Found update: %s", updateID)
+			}
+		}
+	}
+
+	return updates, nil
 }

@@ -35,6 +35,7 @@ type Bucket interface {
 	UploadFileIntoUpdate(update types.Update, fileName string, content io.Reader) error
 	DeleteUpdateFolder(branch string, runtimeVersion string, updateId string) error
 	RequestUploadUrlsForFileUpdates(branch string, runtimeVersion string, updateId string, fileNames []string) ([]types.FileUpdateRequest, error)
+	ListUpdates(branch string, runtimeVersion string) ([]string, error)
 }
 
 var bucket Bucket

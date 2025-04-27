@@ -102,6 +102,11 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 	resolvedBucket := bucket.GetBucket()
 	log.Printf("[RequestID: %s] ASSET-DEBUG: Looking for asset %s in update %s/%s/%s (bucket type: %T)",
 		requestID, req.AssetName, lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, resolvedBucket)
+
+	// Add more detailed logging about the exact path being checked
+	fullPath := lastUpdate.Branch + "/" + lastUpdate.RuntimeVersion + "/" + lastUpdate.UpdateId + "/" + req.AssetName
+	log.Printf("[RequestID: %s] ASSET-DEBUG: Full path being checked: %s", requestID, fullPath)
+
 	asset, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, req.AssetName)
 	if err != nil {
 		log.Printf("[RequestID: %s] Error getting asset: %v", requestID, err)
@@ -132,6 +137,13 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		}
 
 		if err != nil {
+			// Log additional information about available asset paths in the metadata
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Asset not found. Available assets in metadata:", requestID)
+			for i, asset := range platformMetadata.Assets {
+				log.Printf("[RequestID: %s] ASSET-DEBUG:   Asset %d: %s", requestID, i+1, asset.Path)
+			}
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Bundle path: %s", requestID, platformMetadata.Bundle)
+
 			return AssetsResponse{StatusCode: http.StatusInternalServerError, Body: []byte("Error getting asset")}, nil, "", nil
 		}
 	}
