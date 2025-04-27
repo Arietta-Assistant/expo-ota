@@ -52,6 +52,9 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		return AssetsResponse{StatusCode: http.StatusNotFound, Body: []byte("No update found")}, nil, "", nil
 	}
 
+	log.Printf("[RequestID: %s] ASSET-DEBUG: Using update ID %s for asset request (branch=%s, runtimeVersion=%s)",
+		requestID, lastUpdate.UpdateId, req.Branch, req.RuntimeVersion)
+
 	if !returnAsset {
 		headers := map[string]string{
 			"expo-protocol-version": "1",
@@ -97,10 +100,40 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 	}
 
 	resolvedBucket := bucket.GetBucket()
+	log.Printf("[RequestID: %s] ASSET-DEBUG: Looking for asset %s in update %s/%s/%s (bucket type: %T)",
+		requestID, req.AssetName, lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, resolvedBucket)
 	asset, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, req.AssetName)
 	if err != nil {
 		log.Printf("[RequestID: %s] Error getting asset: %v", requestID, err)
-		return AssetsResponse{StatusCode: http.StatusInternalServerError, Body: []byte("Error getting asset")}, nil, "", nil
+
+		// Try other potential update directories by getting all updates for this runtime version
+		allUpdates, listErr := update.GetAllUpdatesForRuntimeVersion(req.Branch, req.RuntimeVersion)
+		if listErr == nil && len(allUpdates) > 0 {
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Found %d other updates for runtime %s, attempting fallbacks",
+				requestID, len(allUpdates), req.RuntimeVersion)
+
+			// Try each update directory
+			for _, otherUpdate := range allUpdates {
+				if otherUpdate.UpdateId == lastUpdate.UpdateId {
+					continue // Skip the one we already tried
+				}
+
+				log.Printf("[RequestID: %s] ASSET-DEBUG: Trying fallback update %s for asset %s",
+					requestID, otherUpdate.UpdateId, req.AssetName)
+				fallbackAsset, fallbackErr := resolvedBucket.GetFile(otherUpdate.Branch, otherUpdate.RuntimeVersion, otherUpdate.UpdateId, req.AssetName)
+				if fallbackErr == nil {
+					log.Printf("[RequestID: %s] ASSET-DEBUG: Found asset in fallback update %s!",
+						requestID, otherUpdate.UpdateId)
+					asset = fallbackAsset
+					err = nil
+					break
+				}
+			}
+		}
+
+		if err != nil {
+			return AssetsResponse{StatusCode: http.StatusInternalServerError, Body: []byte("Error getting asset")}, nil, "", nil
+		}
 	}
 
 	var contentType string

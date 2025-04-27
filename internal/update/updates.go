@@ -522,6 +522,7 @@ func ComposeUpdateManifest(
 	update types.Update,
 	platform string,
 ) (types.UpdateManifest, error) {
+	log.Printf("MANIFEST-DEBUG: Creating manifest for update ID: %s, platform: %s", update.UpdateId, platform)
 	cache := cache2.GetCache()
 	cacheKey := ComputeUpdataManifestCacheKey(update.Branch, update.RuntimeVersion, update.UpdateId, platform)
 	if cachedValue := cache.Get(cacheKey); cachedValue != "" {

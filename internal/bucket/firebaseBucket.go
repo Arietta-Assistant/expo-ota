@@ -140,7 +140,20 @@ func (b *FirebaseBucket) GetUpdate(branch string, runtimeVersion string, updateI
 
 func (b *FirebaseBucket) GetFile(branch string, runtimeVersion string, updateId string, fileName string) (io.ReadCloser, error) {
 	objectPath := path.Join("updates", branch, runtimeVersion, updateId, fileName)
-	log.Printf("DEBUG: Getting file %s", objectPath)
+	log.Printf("FIREBASE-DEBUG: Getting file %s", objectPath)
+
+	// Check if the file exists
+	obj := b.bucket.Object(objectPath)
+	attrs, err := obj.Attrs(context.Background())
+	if err != nil {
+		if err == storage.ErrObjectNotExist {
+			log.Printf("FIREBASE-DEBUG: File not found: %s", objectPath)
+		} else {
+			log.Printf("FIREBASE-DEBUG: Error checking file existence: %v", err)
+		}
+	} else {
+		log.Printf("FIREBASE-DEBUG: File exists with size: %d bytes, created: %v", attrs.Size, attrs.Created)
+	}
 
 	// Special debug for metadata.json
 	if fileName == "metadata.json" {
