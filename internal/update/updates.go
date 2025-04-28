@@ -549,10 +549,6 @@ func ComposeUpdateManifest(
 		log.Printf("DEBUG: Android bundle path: %s", platformSpecificMetadata.Bundle)
 	}
 
-	// Debug log all metadata
-	metadataBytes, _ := json.MarshalIndent(metadata.MetadataJSON, "", "  ")
-	log.Printf("DEBUG: Complete metadata for update %s:\n%s", update.UpdateId, string(metadataBytes))
-
 	if platformSpecificMetadata.Bundle == "" {
 		log.Printf("ERROR: Missing bundle path for platform %s in update %s", platform, update.UpdateId)
 		return types.UpdateManifest{}, fmt.Errorf("missing bundle path for platform %s", platform)
@@ -600,10 +596,13 @@ func ComposeUpdateManifest(
 
 	// Create metadata object with required fields
 	metadataObj := map[string]interface{}{
-		"updateCode": update.BuildNumber,
-		"commitHash": update.CommitHash,
-		"platform":   platform,
-		"branch":     update.Branch,
+		"updateCode":  update.BuildNumber,
+		"commitHash":  update.CommitHash,
+		"platform":    platform,
+		"branch":      update.Branch,
+		"isAvailable": true,
+		"isRollback":  false,
+		"isPending":   false,
 	}
 
 	// Add any extra fields from the original metadata
@@ -637,6 +636,10 @@ func ComposeUpdateManifest(
 		return manifest, nil
 	}
 	_ = cache.Set(cacheKey, string(cacheValue), nil)
+
+	// Log the complete manifest for debugging
+	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
+	log.Printf("DEBUG: Complete manifest for update %s:\n%s", update.UpdateId, string(manifestBytes))
 
 	return manifest, nil
 }
