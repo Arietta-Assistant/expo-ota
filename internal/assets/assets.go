@@ -310,11 +310,16 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 }
 
 func HandleAssetsWithFile(req AssetsRequest) (AssetsResponse, error) {
+	log.Printf("[RequestID: %s] ASSET-DEBUG: Starting asset lookup for %s (platform: %s, runtimeVersion: %s)",
+		req.RequestID, req.AssetName, req.Platform, req.RuntimeVersion)
+
 	resp, bucketFile, _, err := getAssetMetadata(req, true)
 	if err != nil {
+		log.Printf("[RequestID: %s] ASSET-DEBUG: Error getting asset metadata: %v", req.RequestID, err)
 		return resp, err
 	}
 	if resp.StatusCode != 200 {
+		log.Printf("[RequestID: %s] ASSET-DEBUG: Non-200 status code from metadata: %d", req.RequestID, resp.StatusCode)
 		return AssetsResponse{
 			StatusCode: resp.StatusCode,
 			Body:       resp.Body,
@@ -322,23 +327,25 @@ func HandleAssetsWithFile(req AssetsRequest) (AssetsResponse, error) {
 	}
 
 	if bucketFile == nil {
-		log.Printf("[RequestID: %s] Resolved file is nil", req.RequestID)
+		log.Printf("[RequestID: %s] ASSET-DEBUG: Resolved file is nil", req.RequestID)
 		return AssetsResponse{
 			StatusCode: http.StatusInternalServerError,
 			Body:       []byte("Resolved file is nil"),
 		}, nil
 	}
 
+	log.Printf("[RequestID: %s] ASSET-DEBUG: Successfully found file, reading contents", req.RequestID)
 	buffer, err := io.ReadAll(bucketFile.Reader)
 	defer bucketFile.Reader.Close()
 	if err != nil {
-		log.Printf("[RequestID: %s] Error converting asset to buffer: %v", req.RequestID, err)
+		log.Printf("[RequestID: %s] ASSET-DEBUG: Error converting asset to buffer: %v", req.RequestID, err)
 		return AssetsResponse{
 			StatusCode: http.StatusInternalServerError,
 			Body:       []byte("Error converting asset to buffer"),
 		}, err
 	}
 
+	log.Printf("[RequestID: %s] ASSET-DEBUG: Successfully read %d bytes from asset", req.RequestID, len(buffer))
 	resp.Body = buffer
 	return resp, nil
 }

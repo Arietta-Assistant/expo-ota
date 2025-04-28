@@ -20,11 +20,17 @@ func AssetsHandler(c *gin.Context) {
 	runtimeVersion := c.Query("runtimeVersion")
 	platform := c.Query("platform")
 
+	log.Printf("[RequestID: %s] Query parameters - asset: %s, runtimeVersion: %s, platform: %s",
+		requestID, assetPath, runtimeVersion, platform)
+
 	// Check if we're using path parameters instead
 	path := c.Param("path")
+	log.Printf("[RequestID: %s] Path parameter: %s", requestID, path)
+
 	if path != "" {
 		parts := strings.Split(path, "/")
 		if len(parts) < 4 {
+			log.Printf("[RequestID: %s] Invalid path format: %s", requestID, path)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path format"})
 			return
 		}
@@ -72,6 +78,8 @@ func AssetsHandler(c *gin.Context) {
 
 	// For query parameter requests (the common case)
 	if assetPath == "" || runtimeVersion == "" || platform == "" {
+		log.Printf("[RequestID: %s] Missing required parameters: asset=%s, runtimeVersion=%s, platform=%s",
+			requestID, assetPath, runtimeVersion, platform)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required parameters: asset, runtimeVersion, or platform"})
 		return
 	}
@@ -80,6 +88,7 @@ func AssetsHandler(c *gin.Context) {
 	branch := c.Query("branch")
 	if branch == "" {
 		branch = "ota-updates" // Default branch
+		log.Printf("[RequestID: %s] Using default branch: %s", requestID, branch)
 	}
 
 	// Create the request object
@@ -92,8 +101,8 @@ func AssetsHandler(c *gin.Context) {
 	}
 
 	// Use our improved asset handling logic
-	log.Printf("[RequestID: %s] Looking for asset: %s (platform: %s, runtimeVersion: %s)",
-		requestID, assetPath, platform, runtimeVersion)
+	log.Printf("[RequestID: %s] Looking for asset: %s (platform: %s, runtimeVersion: %s, branch: %s)",
+		requestID, assetPath, platform, runtimeVersion, branch)
 
 	res, err := assets.HandleAssetsWithFile(req)
 	if err != nil {
@@ -108,6 +117,7 @@ func AssetsHandler(c *gin.Context) {
 	}
 
 	if res.StatusCode != http.StatusOK {
+		log.Printf("[RequestID: %s] Non-200 status code: %d, body: %s", requestID, res.StatusCode, string(res.Body))
 		c.JSON(res.StatusCode, gin.H{"error": string(res.Body)})
 		return
 	}
