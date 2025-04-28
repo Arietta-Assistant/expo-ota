@@ -99,7 +99,8 @@ func putResponse(w http.ResponseWriter, r *http.Request, content interface{}, fi
 }
 
 func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate types.Update, platform string, protocolVersion int64, requestID string) {
-	log.Printf("[RequestID: %s] Sending update to client: ID=%s, Branch=%s, RuntimeVersion=%s",
+	currentUpdateId := r.Header.Get("expo-current-update-id")
+	log.Printf("[RequestID: %s] Processing update request: updateId=%s, branch=%s, runtimeVersion=%s",
 		requestID, lastUpdate.UpdateId, lastUpdate.Branch, lastUpdate.RuntimeVersion)
 
 	metadata, err := update.GetMetadata(lastUpdate)
@@ -108,6 +109,73 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 		http.Error(w, "Error getting metadata", http.StatusInternalServerError)
 		return
 	}
+
+	// Extract build number from Expo-Extra-Params
+	currentBuild := ""
+	extraParams := r.Header.Get("Expo-Extra-Params")
+	if extraParams != "" {
+		// Parse the extra params format: expo-build-number="build-5"
+		extraParamsParts := strings.Split(extraParams, ",")
+		for _, part := range extraParamsParts {
+			part = strings.TrimSpace(part)
+			if strings.Contains(part, "expo-build-number") {
+				// Extract the value between quotes
+				start := strings.Index(part, "\"")
+				end := strings.LastIndex(part, "\"")
+				if start != -1 && end != -1 && end > start {
+					currentBuild = part[start+1 : end]
+					log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, currentBuild)
+				}
+				break
+			}
+		}
+	}
+
+	// If we didn't find it in Expo-Extra-Params, try the direct header (fallback)
+	if currentBuild == "" {
+		currentBuild = r.Header.Get("expo-build-number")
+		if currentBuild != "" {
+			log.Printf("[RequestID: %s] Using fallback expo-build-number header: %s", requestID, currentBuild)
+		}
+	}
+
+	// Add debug logging
+	log.Printf("[RequestID: %s] Client build number: %s, Current update ID: %s",
+		requestID, currentBuild, currentUpdateId)
+
+	// Get build number from update ID
+	updateBuild := lastUpdate.UpdateId
+	log.Printf("[RequestID: %s] Update ID (containing build number): %s", requestID, updateBuild)
+
+	// Only check builds if we have a current build number
+	if currentBuild != "" {
+		log.Printf("[RequestID: %s] Comparing client build %s with update %s",
+			requestID, currentBuild, updateBuild)
+
+		result := compareBuildNumbersWithRequestID(currentBuild, updateBuild, requestID)
+		if result >= 0 {
+			log.Printf("[RequestID: %s] No update needed - client build (%s) >= available update (%s)",
+				requestID, currentBuild, updateBuild)
+			putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
+			return
+		} else {
+			log.Printf("[RequestID: %s] Update needed - client build (%s) < available update (%s)",
+				requestID, currentBuild, updateBuild)
+		}
+	} else {
+		log.Printf("[RequestID: %s] Client did not provide build number, skipping build comparison", requestID)
+	}
+
+	// Check update ID match only if build number check doesn't apply
+	if currentUpdateId != "" && currentUpdateId == crypto.ConvertSHA256HashToUUID(metadata.ID) && protocolVersion == 1 {
+		log.Printf("[RequestID: %s] No update needed - client already has update ID %s",
+			requestID, currentUpdateId)
+		putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
+		return
+	}
+
+	log.Printf("[RequestID: %s] Sending update to client: ID=%s, Branch=%s, RuntimeVersion=%s",
+		requestID, lastUpdate.UpdateId, lastUpdate.Branch, lastUpdate.RuntimeVersion)
 
 	manifest, err := update.ComposeUpdateManifest(&metadata, lastUpdate, platform)
 	if err != nil {
