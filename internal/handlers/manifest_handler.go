@@ -74,28 +74,34 @@ func writeResponse(w http.ResponseWriter, writer *multipart.Writer, buf *bytes.B
 	}
 }
 
-func putResponse(w http.ResponseWriter, r *http.Request, content interface{}, fieldName string, runtimeVersion string, protocolVersion int64, requestID string) {
-	signedHash, err := signDirectiveOrManifest(content, r.Header.Get("expo-expect-signature"))
+func putResponse(w http.ResponseWriter, r *http.Request, data interface{}, kind string, runtimeVersion string, protocolVersion int64, requestID string) {
+	// Add debug logging for every response
+	log.Printf("[RequestID: %s] Sending %s response for runtime version %s", requestID, kind, runtimeVersion)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("expo-protocol-version", strconv.FormatInt(protocolVersion, 10))
+	w.Header().Set("expo-sfv-version", "0")
+	w.Header().Set("Cache-Control", "private, max-age=0")
+	w.WriteHeader(http.StatusOK)
+
+	// Marshal and log payload
+	payloadBytes, err := json.Marshal(data)
 	if err != nil {
-		log.Printf("[RequestID: %s] Error signing content: %v", requestID, err)
-		http.Error(w, "Error signing content", http.StatusInternalServerError)
+		log.Printf("[RequestID: %s] ERROR - Failed to marshal response payload: %v", requestID, err)
+		http.Error(w, "Error generating response", http.StatusInternalServerError)
 		return
 	}
-	headers := map[string][]string{
-		"Content-Disposition": {fmt.Sprintf("form-data; name=\"%s\"", fieldName)},
-		"Content-Type":        {"application/json"},
-		"content-type":        {"application/json; charset=utf-8"},
-	}
-	if signedHash != "" {
-		headers["expo-signature"] = []string{fmt.Sprintf("sig=\"%s\", keyid=\"main\"", signedHash)}
-	}
-	writer, buf, err := createMultipartResponse(headers, content)
+
+	log.Printf("[RequestID: %s] DEBUG - Response payload size: %d bytes", requestID, len(payloadBytes))
+
+	// Write the response
+	_, err = w.Write(payloadBytes)
 	if err != nil {
-		log.Printf("[RequestID: %s] Error creating multipart response: %v", requestID, err)
-		http.Error(w, "Error creating multipart response", http.StatusInternalServerError)
+		log.Printf("[RequestID: %s] ERROR - Failed to write response: %v", requestID, err)
 		return
 	}
-	writeResponse(w, writer, buf, protocolVersion, runtimeVersion, requestID)
+
+	log.Printf("[RequestID: %s] Response successfully sent", requestID)
 }
 
 func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate types.Update, platform string, protocolVersion int64, requestID string) {
@@ -114,19 +120,35 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 	currentBuild := ""
 	extraParams := r.Header.Get("Expo-Extra-Params")
 	if extraParams != "" {
-		// Parse the extra params format: expo-build-number="build-5"
-		extraParamsParts := strings.Split(extraParams, ",")
-		for _, part := range extraParamsParts {
-			part = strings.TrimSpace(part)
-			if strings.Contains(part, "expo-build-number") {
-				// Extract the value between quotes
-				start := strings.Index(part, "\"")
-				end := strings.LastIndex(part, "\"")
-				if start != -1 && end != -1 && end > start {
-					currentBuild = part[start+1 : end]
-					log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, currentBuild)
+		log.Printf("[RequestID: %s] DEBUG - Full Expo-Extra-Params value: %s", requestID, extraParams)
+
+		// Try parsing as JSON first
+		var extraParamsMap map[string]string
+		err := json.Unmarshal([]byte(extraParams), &extraParamsMap)
+		if err == nil {
+			// Successfully parsed as JSON
+			log.Printf("[RequestID: %s] DEBUG - Successfully parsed Expo-Extra-Params as JSON", requestID)
+			if bn, ok := extraParamsMap["expo-build-number"]; ok {
+				currentBuild = bn
+				log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params JSON: %s", requestID, currentBuild)
+			}
+		} else {
+			log.Printf("[RequestID: %s] DEBUG - Failed to parse Expo-Extra-Params as JSON: %v", requestID, err)
+
+			// Parse the extra params format: expo-build-number="build-5"
+			extraParamsParts := strings.Split(extraParams, ",")
+			for _, part := range extraParamsParts {
+				part = strings.TrimSpace(part)
+				if strings.Contains(part, "expo-build-number") {
+					// Extract the value between quotes
+					start := strings.Index(part, "\"")
+					end := strings.LastIndex(part, "\"")
+					if start != -1 && end != -1 && end > start {
+						currentBuild = part[start+1 : end]
+						log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, currentBuild)
+					}
+					break
 				}
-				break
 			}
 		}
 	}
@@ -183,6 +205,10 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 		http.Error(w, "Error composing manifest", http.StatusInternalServerError)
 		return
 	}
+
+	// Debug log the manifest
+	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
+	log.Printf("[RequestID: %s] DEBUG - Manifest to be sent:\n%s", requestID, string(manifestBytes))
 
 	metrics.TrackUpdateDownload(platform, lastUpdate.RuntimeVersion, lastUpdate.Branch, metadata.ID, "update")
 	log.Printf("[RequestID: %s] Update download tracked successfully", requestID)
@@ -315,22 +341,36 @@ func ManifestHandler(c *gin.Context) {
 	if extraParams != "" {
 		log.Printf("[RequestID: %s] DEBUG - Raw Expo-Extra-Params: %s", requestID, extraParams)
 
-		// Parse the extra params format: expo-build-number="build-5"
-		extraParamsParts := strings.Split(extraParams, ",")
-		log.Printf("[RequestID: %s] DEBUG - Split into %d parts:", requestID, len(extraParamsParts))
-		for i, part := range extraParamsParts {
-			part = strings.TrimSpace(part)
-			log.Printf("[RequestID: %s]   Part %d: %s", requestID, i, part)
+		// Try parsing as JSON first
+		var extraParamsMap map[string]string
+		err := json.Unmarshal([]byte(extraParams), &extraParamsMap)
+		if err == nil {
+			// Successfully parsed as JSON
+			log.Printf("[RequestID: %s] DEBUG - Successfully parsed Expo-Extra-Params as JSON", requestID)
+			if bn, ok := extraParamsMap["expo-build-number"]; ok {
+				buildNumber = bn
+				log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params JSON: %s", requestID, buildNumber)
+			}
+		} else {
+			log.Printf("[RequestID: %s] DEBUG - Failed to parse Expo-Extra-Params as JSON: %v", requestID, err)
 
-			if strings.Contains(part, "expo-build-number") {
-				// Extract the value between quotes
-				start := strings.Index(part, "\"")
-				end := strings.LastIndex(part, "\"")
-				if start != -1 && end != -1 && end > start {
-					buildNumber = part[start+1 : end]
-					log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, buildNumber)
+			// Parse the extra params format: expo-build-number="build-5"
+			extraParamsParts := strings.Split(extraParams, ",")
+			log.Printf("[RequestID: %s] DEBUG - Split into %d parts:", requestID, len(extraParamsParts))
+			for i, part := range extraParamsParts {
+				part = strings.TrimSpace(part)
+				log.Printf("[RequestID: %s]   Part %d: %s", requestID, i, part)
+
+				if strings.Contains(part, "expo-build-number") {
+					// Extract the value between quotes
+					start := strings.Index(part, "\"")
+					end := strings.LastIndex(part, "\"")
+					if start != -1 && end != -1 && end > start {
+						buildNumber = part[start+1 : end]
+						log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, buildNumber)
+					}
+					break
 				}
-				break
 			}
 		}
 	}
