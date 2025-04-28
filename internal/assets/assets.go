@@ -5,6 +5,7 @@ import (
 	"expo-open-ota/internal/cdn"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
+	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -163,6 +164,33 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		bundle := platformMetadata.Bundle
 		isLaunchAsset = bundle == req.AssetName
 
+		// Special handling if this is a JavaScript bundle and we know the exact path from metadata
+		if isLaunchAsset && bundle != "" {
+			// The metadata contains the exact path for the bundle
+			log.Printf("[RequestID: %s] ASSET-DEBUG: This is a launch asset (bundle), using exact path from metadata: %s",
+				requestID, bundle)
+
+			// Try to get the bundle using the exact path from metadata
+			bundleAsset, bundleErr := resolvedBucket.GetFile(
+				currentUpdate.Branch,
+				currentUpdate.RuntimeVersion,
+				currentUpdate.UpdateId,
+				bundle)
+
+			if bundleErr == nil {
+				// Found the bundle!
+				asset = bundleAsset
+				successfulUpdateId = currentUpdate.UpdateId
+				contentType = "application/javascript"
+				log.Printf("[RequestID: %s] ASSET-DEBUG: Successfully found bundle in update %s using metadata path!",
+					requestID, currentUpdate.UpdateId)
+				break
+			} else {
+				log.Printf("[RequestID: %s] ASSET-DEBUG: Failed to find bundle using metadata path: %v",
+					requestID, bundleErr)
+			}
+		}
+
 		// Look for the requested asset in the assets list
 		foundAsset := false
 		for _, asset := range platformMetadata.Assets {
@@ -184,11 +212,83 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		fullPath := currentUpdate.Branch + "/" + currentUpdate.RuntimeVersion + "/" + currentUpdate.UpdateId + "/" + req.AssetName
 		log.Printf("[RequestID: %s] ASSET-DEBUG: Trying to get asset at path: %s", requestID, fullPath)
 
-		assetFile, assetErr := resolvedBucket.GetFile(
+		// Try multiple path variants for bundle files (index.js)
+		assetErr := fmt.Errorf("not tried yet")
+		var assetFile io.ReadCloser
+
+		// First try the direct path
+		assetFile, assetErr = resolvedBucket.GetFile(
 			currentUpdate.Branch,
 			currentUpdate.RuntimeVersion,
 			currentUpdate.UpdateId,
 			req.AssetName)
+
+		// If direct path failed and it looks like a bundle file (_expo path)
+		if assetErr != nil && strings.HasPrefix(req.AssetName, "_expo/") {
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Direct path failed, trying alternative paths for bundle file", requestID)
+
+			// Try without the _expo prefix
+			altAssetName := strings.TrimPrefix(req.AssetName, "_expo/")
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Trying without _expo prefix: %s", requestID, altAssetName)
+			assetFile, assetErr = resolvedBucket.GetFile(
+				currentUpdate.Branch,
+				currentUpdate.RuntimeVersion,
+				currentUpdate.UpdateId,
+				altAssetName)
+
+			// Try with bundles/ prefix
+			if assetErr != nil {
+				bundlesPath := "bundles/" + req.AssetName
+				log.Printf("[RequestID: %s] ASSET-DEBUG: Trying with bundles/ prefix: %s", requestID, bundlesPath)
+				assetFile, assetErr = resolvedBucket.GetFile(
+					currentUpdate.Branch,
+					currentUpdate.RuntimeVersion,
+					currentUpdate.UpdateId,
+					bundlesPath)
+			}
+
+			// Try with both bundle directory and flattened file name
+			if assetErr != nil {
+				parts := strings.Split(req.AssetName, "/")
+				if len(parts) > 0 {
+					fileName := parts[len(parts)-1]
+					log.Printf("[RequestID: %s] ASSET-DEBUG: Trying with just filename: %s", requestID, fileName)
+					assetFile, assetErr = resolvedBucket.GetFile(
+						currentUpdate.Branch,
+						currentUpdate.RuntimeVersion,
+						currentUpdate.UpdateId,
+						fileName)
+				}
+			}
+		}
+
+		// If direct path failed and it looks like an asset file (assets/ path)
+		if assetErr != nil && strings.HasPrefix(req.AssetName, "assets/") {
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Direct path failed, trying alternative paths for asset file", requestID)
+
+			// Try without the assets/ prefix
+			assetName := strings.TrimPrefix(req.AssetName, "assets/")
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Trying without assets/ prefix: %s", requestID, assetName)
+			assetFile, assetErr = resolvedBucket.GetFile(
+				currentUpdate.Branch,
+				currentUpdate.RuntimeVersion,
+				currentUpdate.UpdateId,
+				assetName)
+
+			// Try with just the asset hash (last part of path)
+			if assetErr != nil {
+				parts := strings.Split(req.AssetName, "/")
+				if len(parts) > 0 {
+					assetHash := parts[len(parts)-1]
+					log.Printf("[RequestID: %s] ASSET-DEBUG: Trying with just asset hash: %s", requestID, assetHash)
+					assetFile, assetErr = resolvedBucket.GetFile(
+						currentUpdate.Branch,
+						currentUpdate.RuntimeVersion,
+						currentUpdate.UpdateId,
+						assetHash)
+				}
+			}
+		}
 
 		if assetErr == nil {
 			// Found the asset!
