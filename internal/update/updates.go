@@ -394,7 +394,7 @@ func GetMetadata(update types.Update) (types.UpdateMetadata, error) {
 	return metadata, nil
 }
 
-func BuildFinalManifestAssetUrlURL(baseURL, assetFilePath, runtimeVersion, platform, branch string) (string, error) {
+func BuildFinalManifestAssetUrlURL(baseURL, assetFilePath, runtimeVersion, platform string) (string, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid base URL: %w", err)
@@ -405,7 +405,6 @@ func BuildFinalManifestAssetUrlURL(baseURL, assetFilePath, runtimeVersion, platf
 	query.Set("asset", assetFilePath)
 	query.Set("runtimeVersion", runtimeVersion)
 	query.Set("platform", platform)
-	query.Set("branch", branch)
 	parsedURL.RawQuery = query.Encode()
 
 	return parsedURL.String(), nil
@@ -499,7 +498,7 @@ func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset b
 	if isLaunchAsset {
 		contentType = mime.TypeByExtension(asset.Ext)
 	}
-	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), assetPath, update.RuntimeVersion, platform, update.Branch)
+	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), assetPath, update.RuntimeVersion, platform)
 	if errUrl != nil {
 		return types.ManifestAsset{}, errUrl
 	}
@@ -549,6 +548,10 @@ func ComposeUpdateManifest(
 		log.Printf("DEBUG: Android bundle path: %s", platformSpecificMetadata.Bundle)
 	}
 
+	// Debug log all metadata
+	metadataBytes, _ := json.MarshalIndent(metadata.MetadataJSON, "", "  ")
+	log.Printf("DEBUG: Complete metadata for update %s:\n%s", update.UpdateId, string(metadataBytes))
+
 	if platformSpecificMetadata.Bundle == "" {
 		log.Printf("ERROR: Missing bundle path for platform %s in update %s", platform, update.UpdateId)
 		return types.UpdateManifest{}, fmt.Errorf("missing bundle path for platform %s", platform)
@@ -560,86 +563,51 @@ func ComposeUpdateManifest(
 		wg     sync.WaitGroup
 	)
 
-	// Process assets in parallel
-	for i, asset := range platformSpecificMetadata.Assets {
+	for i, a := range platformSpecificMetadata.Assets {
 		wg.Add(1)
-		go func(i int, asset types.Asset) {
+		go func(index int, asset types.Asset) {
 			defer wg.Done()
-			manifestAsset, err := shapeManifestAsset(update, &asset, false, platform)
-			if err != nil {
-				errs <- err
+			shapedAsset, errShape := shapeManifestAsset(update, &asset, false, platform)
+			if errShape != nil {
+				errs <- errShape
 				return
 			}
-			assets[i] = manifestAsset
-		}(i, asset)
+			assets[index] = shapedAsset
+		}(i, a)
 	}
 
-	// Wait for all assets to be processed
 	wg.Wait()
 	close(errs)
 
-	// Check for any errors
-	for err := range errs {
-		if err != nil {
-			return types.UpdateManifest{}, err
-		}
+	if len(errs) > 0 {
+		return types.UpdateManifest{}, <-errs
 	}
 
-	// Process launch asset
-	launchAsset, err := shapeManifestAsset(update, &types.Asset{
+	launchAsset, errShape := shapeManifestAsset(update, &types.Asset{
 		Path: platformSpecificMetadata.Bundle,
-		Ext:  "js",
+		Ext:  "",
 	}, true, platform)
-	if err != nil {
-		return types.UpdateManifest{}, err
+	if errShape != nil {
+		return types.UpdateManifest{}, errShape
 	}
 
-	// Create metadata object with required fields
-	metadataObj := map[string]interface{}{
-		"updateCode":  update.BuildNumber,
-		"commitHash":  update.CommitHash,
-		"platform":    platform,
-		"branch":      update.Branch,
-		"isAvailable": true,
-		"isRollback":  false,
-		"isPending":   false,
-	}
-
-	// Add any extra fields from the original metadata
-	for k, v := range metadata.MetadataJSON.Extra {
-		metadataObj[k] = v
-	}
-
-	metadataJSON, err := json.Marshal(metadataObj)
-	if err != nil {
-		return types.UpdateManifest{}, err
-	}
-
-	// Create the manifest with proper metadata and extra fields
 	manifest := types.UpdateManifest{
 		Id:             crypto.ConvertSHA256HashToUUID(metadata.ID),
 		CreatedAt:      metadata.CreatedAt,
 		RunTimeVersion: update.RuntimeVersion,
-		Metadata:       json.RawMessage(metadataJSON),
+		Metadata:       json.RawMessage("{}"),
 		Extra: types.ExtraManifestData{
-			ExpoClient:  expoConfig,
-			Branch:      update.Branch,
-			BuildNumber: update.BuildNumber,
+			ExpoClient: expoConfig,
+			Branch:     update.Branch,
 		},
 		Assets:      assets,
 		LaunchAsset: launchAsset,
 	}
-
-	// Cache the manifest
 	cacheValue, err := json.Marshal(manifest)
 	if err != nil {
 		return manifest, nil
 	}
 	_ = cache.Set(cacheKey, string(cacheValue), nil)
-
-	// Log the complete manifest for debugging
-	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
-	log.Printf("DEBUG: Complete manifest for update %s:\n%s", update.UpdateId, string(manifestBytes))
 
 	return manifest, nil
 }

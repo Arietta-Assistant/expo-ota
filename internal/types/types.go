@@ -50,9 +50,8 @@ type ManifestAsset struct {
 }
 
 type ExtraManifestData struct {
-	ExpoClient  json.RawMessage `json:"expoClient"`
-	Branch      string          `json:"branch"`
-	BuildNumber string          `json:"buildNumber,omitempty"`
+	ExpoClient json.RawMessage `json:"expoClient"`
+	Branch     string          `json:"branch"`
 }
 
 type UpdateManifest struct {

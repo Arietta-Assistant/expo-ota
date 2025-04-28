@@ -117,7 +117,6 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 			"expo-protocol-version": "1",
 			"expo-sfv-version":      "0",
 			"Cache-Control":         "public, max-age=31536000",
-			"expo-build-number":     latestUpdate.BuildNumber,
 		}
 		return AssetsResponse{
 			StatusCode: http.StatusOK,
@@ -296,7 +295,6 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		"expo-sfv-version":      "0",
 		"Cache-Control":         "public, max-age=31536000",
 		"Content-Type":          contentType,
-		"expo-build-number":     latestUpdate.BuildNumber,
 	}
 
 	bucketFile := &types.BucketFile{
