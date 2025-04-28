@@ -34,12 +34,19 @@ func AssetsHandler(c *gin.Context) {
 		branch = c.Param("branch")
 	}
 
+	// If still no branch, try to get it from the channel name header
+	if branch == "" {
+		branch = c.GetHeader("expo-channel-name")
+		log.Printf("[RequestID: %s] ASSET-DEBUG: Using channel name as branch: %s", requestID, branch)
+	}
+
 	log.Printf("[RequestID: %s] ASSET-DEBUG: Request parameters - asset: %s, runtimeVersion: %s, platform: %s, branch: %s",
 		requestID, assetName, runtimeVersion, platform, branch)
 
 	// Validate parameters
 	if assetName == "" || runtimeVersion == "" || platform == "" || branch == "" {
-		log.Printf("[RequestID: %s] ASSET-DEBUG: Missing required parameters", requestID)
+		log.Printf("[RequestID: %s] ASSET-DEBUG: Missing required parameters - asset: %s, runtimeVersion: %s, platform: %s, branch: %s",
+			requestID, assetName, runtimeVersion, platform, branch)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required parameters"})
 		return
 	}

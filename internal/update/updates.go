@@ -394,7 +394,7 @@ func GetMetadata(update types.Update) (types.UpdateMetadata, error) {
 	return metadata, nil
 }
 
-func BuildFinalManifestAssetUrlURL(baseURL, assetFilePath, runtimeVersion, platform string) (string, error) {
+func BuildFinalManifestAssetUrlURL(baseURL, assetFilePath, runtimeVersion, platform, branch string) (string, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid base URL: %w", err)
@@ -405,6 +405,7 @@ func BuildFinalManifestAssetUrlURL(baseURL, assetFilePath, runtimeVersion, platf
 	query.Set("asset", assetFilePath)
 	query.Set("runtimeVersion", runtimeVersion)
 	query.Set("platform", platform)
+	query.Set("branch", branch)
 	parsedURL.RawQuery = query.Encode()
 
 	return parsedURL.String(), nil
@@ -498,7 +499,7 @@ func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset b
 	if isLaunchAsset {
 		contentType = mime.TypeByExtension(asset.Ext)
 	}
-	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), assetPath, update.RuntimeVersion, platform)
+	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), assetPath, update.RuntimeVersion, platform, update.Branch)
 	if errUrl != nil {
 		return types.ManifestAsset{}, errUrl
 	}
