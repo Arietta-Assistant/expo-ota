@@ -62,6 +62,11 @@ func AssetsHandler(c *gin.Context) {
 			return
 		}
 
+		// Set required Expo headers
+		c.Header("expo-protocol-version", "1")
+		c.Header("expo-sfv-version", "0")
+		c.Header("Cache-Control", "private, max-age=0")
+
 		// Return appropriate response
 		for key, value := range res.Headers {
 			c.Header(key, value)
@@ -125,6 +130,11 @@ func AssetsHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
+
+	// Set required Expo headers
+	c.Header("expo-protocol-version", "1")
+	c.Header("expo-sfv-version", "0")
+	c.Header("Cache-Control", "private, max-age=0")
 
 	// Return appropriate response
 	for key, value := range res.Headers {
