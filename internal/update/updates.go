@@ -563,46 +563,56 @@ func ComposeUpdateManifest(
 		wg     sync.WaitGroup
 	)
 
-	for i, a := range platformSpecificMetadata.Assets {
+	// Process assets in parallel
+	for i, asset := range platformSpecificMetadata.Assets {
 		wg.Add(1)
-		go func(index int, asset types.Asset) {
+		go func(i int, asset types.Asset) {
 			defer wg.Done()
-			shapedAsset, errShape := shapeManifestAsset(update, &asset, false, platform)
-			if errShape != nil {
-				errs <- errShape
+			manifestAsset, err := shapeManifestAsset(update, &asset, false, platform)
+			if err != nil {
+				errs <- err
 				return
 			}
-			assets[index] = shapedAsset
-		}(i, a)
+			assets[i] = manifestAsset
+		}(i, asset)
 	}
 
+	// Wait for all assets to be processed
 	wg.Wait()
 	close(errs)
 
-	if len(errs) > 0 {
-		return types.UpdateManifest{}, <-errs
+	// Check for any errors
+	for err := range errs {
+		if err != nil {
+			return types.UpdateManifest{}, err
+		}
 	}
 
-	launchAsset, errShape := shapeManifestAsset(update, &types.Asset{
+	// Process launch asset
+	launchAsset, err := shapeManifestAsset(update, &types.Asset{
 		Path: platformSpecificMetadata.Bundle,
-		Ext:  "",
+		Ext:  "js",
 	}, true, platform)
-	if errShape != nil {
-		return types.UpdateManifest{}, errShape
+	if err != nil {
+		return types.UpdateManifest{}, err
 	}
 
+	// Create the manifest with build number in extra
 	manifest := types.UpdateManifest{
 		Id:             crypto.ConvertSHA256HashToUUID(metadata.ID),
 		CreatedAt:      metadata.CreatedAt,
 		RunTimeVersion: update.RuntimeVersion,
 		Metadata:       json.RawMessage("{}"),
 		Extra: types.ExtraManifestData{
-			ExpoClient: expoConfig,
-			Branch:     update.Branch,
+			ExpoClient:  expoConfig,
+			Branch:      update.Branch,
+			BuildNumber: update.BuildNumber, // Include build number in extra
 		},
 		Assets:      assets,
 		LaunchAsset: launchAsset,
 	}
+
+	// Cache the manifest
 	cacheValue, err := json.Marshal(manifest)
 	if err != nil {
 		return manifest, nil

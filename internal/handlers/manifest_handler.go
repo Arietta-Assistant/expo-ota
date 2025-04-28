@@ -184,35 +184,9 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 		return
 	}
 
-	// Set required headers
-	w.Header().Set("expo-protocol-version", strconv.FormatInt(protocolVersion, 10))
-	w.Header().Set("expo-sfv-version", "0")
-	w.Header().Set("cache-control", "private, max-age=0")
-	w.Header().Set("content-type", "application/json")
-
-	// Sign the manifest if required
-	expectSignature := r.Header.Get("expo-expect-signature")
-	signature, err := signDirectiveOrManifest(manifest, expectSignature)
-	if err != nil {
-		log.Printf("[RequestID: %s] Error signing manifest: %v", requestID, err)
-		http.Error(w, "Error signing manifest", http.StatusInternalServerError)
-		return
-	}
-
-	if signature != "" {
-		w.Header().Set("expo-signature", signature)
-	}
-
-	// Write the manifest as JSON
-	jsonData, err := json.Marshal(manifest)
-	if err != nil {
-		log.Printf("[RequestID: %s] Error marshaling manifest: %v", requestID, err)
-		http.Error(w, "Error marshaling manifest", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	w.Write(jsonData)
+	metrics.TrackUpdateDownload(platform, lastUpdate.RuntimeVersion, lastUpdate.Branch, metadata.ID, "update")
+	log.Printf("[RequestID: %s] Update download tracked successfully", requestID)
+	putResponse(w, r, manifest, "manifest", lastUpdate.RuntimeVersion, protocolVersion, requestID)
 }
 
 func compareBuildNumbersWithRequestID(current, update string, requestID string) int {
@@ -445,8 +419,6 @@ func ManifestHandler(c *gin.Context) {
 
 func PutUpdateInResponse(w http.ResponseWriter, branch string, runtimeVersion string, updateId string) {
 	requestID := uuid.New().String()
-	log.Printf("[RequestID: %s] Serving update %s for %s/%s", requestID, updateId, branch, runtimeVersion)
-
 	// Get update but don't store unused variable
 	_, err := update.GetUpdate(branch, runtimeVersion, updateId)
 	if err != nil {
@@ -491,10 +463,6 @@ func PutUpdateInResponse(w http.ResponseWriter, branch string, runtimeVersion st
 
 	log.Printf("[RequestID: %s] Serving update %s (build: %s) for %s/%s", requestID, updateId, buildNumber, branch, runtimeVersion)
 
-	// Set required Expo headers
-	w.Header().Set("expo-protocol-version", "1")
-	w.Header().Set("expo-sfv-version", "0")
-	w.Header().Set("Cache-Control", "private, max-age=0")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
