@@ -67,6 +67,21 @@ func AssetsHandler(c *gin.Context) {
 			c.Header(key, value)
 		}
 
+		// Set content type based on asset type
+		if strings.HasSuffix(assetPath, ".hbc") || strings.HasSuffix(assetPath, ".js") {
+			c.Header("Content-Type", "application/javascript")
+		} else if strings.HasSuffix(assetPath, ".png") {
+			c.Header("Content-Type", "image/png")
+		} else if strings.HasSuffix(assetPath, ".jpg") || strings.HasSuffix(assetPath, ".jpeg") {
+			c.Header("Content-Type", "image/jpeg")
+		} else if strings.HasSuffix(assetPath, ".gif") {
+			c.Header("Content-Type", "image/gif")
+		} else if strings.HasSuffix(assetPath, ".json") {
+			c.Header("Content-Type", "application/json")
+		} else {
+			c.Header("Content-Type", "application/octet-stream")
+		}
+
 		if res.StatusCode != http.StatusOK {
 			c.Data(res.StatusCode, res.ContentType, res.Body)
 			return
@@ -114,6 +129,21 @@ func AssetsHandler(c *gin.Context) {
 	// Return appropriate response
 	for key, value := range res.Headers {
 		c.Header(key, value)
+	}
+
+	// Set content type based on asset type
+	if strings.HasSuffix(assetPath, ".hbc") || strings.HasSuffix(assetPath, ".js") {
+		c.Header("Content-Type", "application/javascript")
+	} else if strings.HasSuffix(assetPath, ".png") {
+		c.Header("Content-Type", "image/png")
+	} else if strings.HasSuffix(assetPath, ".jpg") || strings.HasSuffix(assetPath, ".jpeg") {
+		c.Header("Content-Type", "image/jpeg")
+	} else if strings.HasSuffix(assetPath, ".gif") {
+		c.Header("Content-Type", "image/gif")
+	} else if strings.HasSuffix(assetPath, ".json") {
+		c.Header("Content-Type", "application/json")
+	} else {
+		c.Header("Content-Type", "application/octet-stream")
 	}
 
 	if res.StatusCode != http.StatusOK {
