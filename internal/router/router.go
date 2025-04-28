@@ -65,6 +65,7 @@ func SetupRoutes(router *gin.Engine) {
 		api.POST("/update/mark-uploaded/:branch", middleware.AuthMiddleware, handlers.MarkUpdateAsUploadedHandler)
 		api.GET("/update/manifest/:branch/:runtimeVersion", handlers.ManifestHandler)
 		api.GET("/update/assets/:path", handlers.AssetsHandler)
+		api.GET("/update/assets", handlers.AssetsHandler)
 		api.GET("/debug/updates/:branch/:runtimeVersion", handlers.ListUpdatesHandler)
 	}
 
