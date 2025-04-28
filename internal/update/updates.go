@@ -598,16 +598,34 @@ func ComposeUpdateManifest(
 		return types.UpdateManifest{}, err
 	}
 
-	// Create the manifest with build number in extra
+	// Create metadata object with required fields
+	metadataObj := map[string]interface{}{
+		"updateCode": update.BuildNumber,
+		"commitHash": update.CommitHash,
+		"platform":   platform,
+		"branch":     update.Branch,
+	}
+
+	// Add any extra fields from the original metadata
+	for k, v := range metadata.MetadataJSON.Extra {
+		metadataObj[k] = v
+	}
+
+	metadataJSON, err := json.Marshal(metadataObj)
+	if err != nil {
+		return types.UpdateManifest{}, err
+	}
+
+	// Create the manifest with proper metadata and extra fields
 	manifest := types.UpdateManifest{
 		Id:             crypto.ConvertSHA256HashToUUID(metadata.ID),
 		CreatedAt:      metadata.CreatedAt,
 		RunTimeVersion: update.RuntimeVersion,
-		Metadata:       json.RawMessage("{}"),
+		Metadata:       json.RawMessage(metadataJSON),
 		Extra: types.ExtraManifestData{
 			ExpoClient:  expoConfig,
 			Branch:      update.Branch,
-			BuildNumber: update.BuildNumber, // Include build number in extra
+			BuildNumber: update.BuildNumber,
 		},
 		Assets:      assets,
 		LaunchAsset: launchAsset,
