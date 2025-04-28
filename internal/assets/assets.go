@@ -5,14 +5,18 @@ import (
 	"expo-open-ota/internal/cdn"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
+	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type AssetsRequest struct {
@@ -29,6 +33,8 @@ type AssetsResponse struct {
 	Body        []byte
 	ContentType string
 	URL         string
+	Path        string
+	Size        int64
 }
 
 func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *types.BucketFile, string, error) {
@@ -370,4 +376,64 @@ func HandleAssetsWithURL(req AssetsRequest, resolvedCDN cdn.CDN) (AssetsResponse
 		}, err
 	}
 	return resp, nil
+}
+
+func getAssetMetadataForPath(branch string, runtimeVersion string, updateId string, assetPath string) (*AssetsResponse, error) {
+	requestID := uuid.New().String()
+	log.Printf("[RequestID: %s] Getting asset metadata for %s/%s/%s/%s", requestID, branch, runtimeVersion, updateId, assetPath)
+
+	// Get the bucket
+	bucket := bucket.GetBucket()
+
+	// Try different path variations
+	paths := []string{
+		assetPath,                          // Original path
+		strings.TrimPrefix(assetPath, "/"), // Without leading slash
+		path.Base(assetPath),               // Just the filename
+	}
+
+	var file io.ReadCloser
+	var err error
+
+	for _, p := range paths {
+		log.Printf("[RequestID: %s] Trying path: %s", requestID, p)
+		file, err = bucket.GetFile(branch, runtimeVersion, updateId, p)
+		if err == nil {
+			log.Printf("[RequestID: %s] Found file at path: %s", requestID, p)
+			break
+		}
+		log.Printf("[RequestID: %s] Path %s not found: %v", requestID, p, err)
+	}
+
+	if err != nil {
+		log.Printf("[RequestID: %s] Asset not found in any path variation: %v", requestID, err)
+		return nil, fmt.Errorf("asset not found: %v", err)
+	}
+	defer file.Close()
+
+	// Get file size by reading the content
+	var size int64
+	buf := make([]byte, 32*1024) // 32KB buffer
+	for {
+		n, err := file.Read(buf)
+		if n > 0 {
+			size += int64(n)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("[RequestID: %s] Error reading file: %v", requestID, err)
+			return nil, fmt.Errorf("error reading file: %v", err)
+		}
+	}
+
+	// Create response
+	response := &AssetsResponse{
+		Path: assetPath,
+		Size: size,
+	}
+
+	log.Printf("[RequestID: %s] Successfully retrieved asset metadata: %+v", requestID, response)
+	return response, nil
 }

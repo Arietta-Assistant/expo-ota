@@ -445,6 +445,8 @@ func ManifestHandler(c *gin.Context) {
 
 func PutUpdateInResponse(w http.ResponseWriter, branch string, runtimeVersion string, updateId string) {
 	requestID := uuid.New().String()
+	log.Printf("[RequestID: %s] Serving update %s for %s/%s", requestID, updateId, branch, runtimeVersion)
+
 	// Get update but don't store unused variable
 	_, err := update.GetUpdate(branch, runtimeVersion, updateId)
 	if err != nil {
@@ -489,6 +491,10 @@ func PutUpdateInResponse(w http.ResponseWriter, branch string, runtimeVersion st
 
 	log.Printf("[RequestID: %s] Serving update %s (build: %s) for %s/%s", requestID, updateId, buildNumber, branch, runtimeVersion)
 
+	// Set required Expo headers
+	w.Header().Set("expo-protocol-version", "1")
+	w.Header().Set("expo-sfv-version", "0")
+	w.Header().Set("Cache-Control", "private, max-age=0")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
