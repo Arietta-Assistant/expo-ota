@@ -13,10 +13,10 @@ import (
 	"log"
 	"mime"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -417,14 +417,19 @@ func GetAssetEndpoint() string {
 func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset bool, platform string) (types.ManifestAsset, error) {
 	cacheKey := ComputeManifestAssetCacheKey(update, asset.Path)
 	cache := cache2.GetCache()
-	if cachedValue := cache.Get(cacheKey); cachedValue != "" {
-		var manifestAsset types.ManifestAsset
-		err := json.Unmarshal([]byte(cachedValue), &manifestAsset)
-		if err != nil {
-			return types.ManifestAsset{}, err
+
+	// Skip cache for now while we're debugging and fixing the issue
+	/*
+		if cachedValue := cache.Get(cacheKey); cachedValue != "" {
+			var manifestAsset types.ManifestAsset
+			err := json.Unmarshal([]byte(cachedValue), &manifestAsset)
+			if err != nil {
+				return types.ManifestAsset{}, err
+			}
+			return manifestAsset, nil
 		}
-		return manifestAsset, nil
-	}
+	*/
+
 	resolvedBucket := bucket.GetBucket()
 
 	// Path to try
@@ -489,31 +494,85 @@ func shapeManifestAsset(update types.Update, asset *types.Asset, isLaunchAsset b
 		return types.ManifestAsset{}, errKey
 	}
 
-	keyExtensionSuffix := asset.Ext
-	if isLaunchAsset {
-		keyExtensionSuffix = "bundle"
+	// Extract file extension
+	var fileExtension string
+	if asset.Ext != "" {
+		// If extension is provided directly, use it with dot prefix
+		if !strings.HasPrefix(asset.Ext, ".") {
+			fileExtension = "." + asset.Ext
+		} else {
+			fileExtension = asset.Ext
+		}
+	} else {
+		// Extract extension from path
+		ext := filepath.Ext(assetPath)
+		if ext != "" {
+			fileExtension = ext
+		} else if isLaunchAsset {
+			fileExtension = ".bundle"
+		} else {
+			fileExtension = ".js" // Default to .js if no extension found
+		}
 	}
-	keyExtensionSuffix = "." + keyExtensionSuffix
-	contentType := "application/javascript"
+
+	// Determine content type based on file extension
+	var contentType string
 	if isLaunchAsset {
-		contentType = mime.TypeByExtension(asset.Ext)
+		contentType = "application/javascript"
+	} else {
+		// Properly determine content type based on file extension
+		switch strings.ToLower(filepath.Ext(assetPath)) {
+		case ".png":
+			contentType = "image/png"
+		case ".jpg", ".jpeg":
+			contentType = "image/jpeg"
+		case ".gif":
+			contentType = "image/gif"
+		case ".svg":
+			contentType = "image/svg+xml"
+		case ".ttf":
+			contentType = "font/ttf"
+		case ".otf":
+			contentType = "font/otf"
+		case ".js":
+			contentType = "application/javascript"
+		case ".json":
+			contentType = "application/json"
+		case ".css":
+			contentType = "text/css"
+		case ".html":
+			contentType = "text/html"
+		default:
+			// Default for unknown types
+			contentType = mime.TypeByExtension(filepath.Ext(assetPath))
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+		}
 	}
+
 	finalUrl, errUrl := BuildFinalManifestAssetUrlURL(GetAssetEndpoint(), assetPath, update.RuntimeVersion, platform)
 	if errUrl != nil {
 		return types.ManifestAsset{}, errUrl
 	}
+
+	log.Printf("DEBUG: Creating manifest asset - Path: %s, Ext: %s, ContentType: %s",
+		assetPath, fileExtension, contentType)
+
 	manifestAsset := types.ManifestAsset{
 		Hash:          urlEncodedHash,
 		Key:           key,
-		FileExtension: keyExtensionSuffix,
+		FileExtension: fileExtension,
 		ContentType:   contentType,
 		Url:           finalUrl,
 	}
+
+	// Store in cache
 	cacheValue, err := json.Marshal(manifestAsset)
-	if err != nil {
-		return manifestAsset, nil
+	if err == nil {
+		_ = cache.Set(cacheKey, string(cacheValue), nil)
 	}
-	_ = cache.Set(cacheKey, string(cacheValue), nil)
+
 	return manifestAsset, nil
 }
 
@@ -525,14 +584,17 @@ func ComposeUpdateManifest(
 	log.Printf("MANIFEST-DEBUG: Creating manifest for update ID: %s, platform: %s", update.UpdateId, platform)
 	cache := cache2.GetCache()
 	cacheKey := ComputeUpdataManifestCacheKey(update.Branch, update.RuntimeVersion, update.UpdateId, platform)
-	if cachedValue := cache.Get(cacheKey); cachedValue != "" {
-		var manifest types.UpdateManifest
-		err := json.Unmarshal([]byte(cachedValue), &manifest)
-		if err != nil {
-			return types.UpdateManifest{}, err
-		}
-		return manifest, nil
-	}
+
+	// Skip cache for debugging purposes
+	// if cachedValue := cache.Get(cacheKey); cachedValue != "" {
+	// 	var manifest types.UpdateManifest
+	// 	err := json.Unmarshal([]byte(cachedValue), &manifest)
+	// 	if err != nil {
+	// 		return types.UpdateManifest{}, err
+	// 	}
+	// 	return manifest, nil
+	// }
+
 	expoConfig, errConfig := GetExpoConfig(update)
 	if errConfig != nil {
 		return types.UpdateManifest{}, errConfig
@@ -557,40 +619,38 @@ func ComposeUpdateManifest(
 		return types.UpdateManifest{}, fmt.Errorf("missing bundle path for platform %s", platform)
 	}
 
-	var (
-		assets = make([]types.ManifestAsset, len(platformSpecificMetadata.Assets))
-		errs   = make(chan error, len(platformSpecificMetadata.Assets))
-		wg     sync.WaitGroup
-	)
+	// Process asset files
+	log.Printf("DEBUG: Processing %d assets for platform %s", len(platformSpecificMetadata.Assets), platform)
 
-	for i, a := range platformSpecificMetadata.Assets {
-		wg.Add(1)
-		go func(index int, asset types.Asset) {
-			defer wg.Done()
-			shapedAsset, errShape := shapeManifestAsset(update, &asset, false, platform)
-			if errShape != nil {
-				errs <- errShape
-				return
-			}
-			assets[index] = shapedAsset
-		}(i, a)
+	// Create all assets objects
+	assets := make([]types.ManifestAsset, 0, len(platformSpecificMetadata.Assets))
+
+	// Process each asset sequentially for predictable results
+	for i, asset := range platformSpecificMetadata.Assets {
+		log.Printf("DEBUG: Processing asset %d: %s", i, asset.Path)
+		shapedAsset, err := shapeManifestAsset(update, &asset, false, platform)
+		if err != nil {
+			log.Printf("ERROR: Failed to process asset %s: %v", asset.Path, err)
+			continue // Skip this asset but continue processing others
+		}
+		assets = append(assets, shapedAsset)
 	}
 
-	wg.Wait()
-	close(errs)
-
-	if len(errs) > 0 {
-		return types.UpdateManifest{}, <-errs
-	}
-
+	// Process the launch asset (main bundle)
+	log.Printf("DEBUG: Processing launch asset: %s", platformSpecificMetadata.Bundle)
 	launchAsset, errShape := shapeManifestAsset(update, &types.Asset{
 		Path: platformSpecificMetadata.Bundle,
-		Ext:  "",
+		Ext:  "bundle", // Always use bundle as extension for launch asset
 	}, true, platform)
+
 	if errShape != nil {
-		return types.UpdateManifest{}, errShape
+		return types.UpdateManifest{}, fmt.Errorf("error processing launch asset: %w", errShape)
 	}
 
+	// Ensure launch asset has correct content type
+	launchAsset.ContentType = "application/javascript"
+
+	// Create the manifest object
 	manifest := types.UpdateManifest{
 		Id:             crypto.ConvertSHA256HashToUUID(metadata.ID),
 		CreatedAt:      metadata.CreatedAt,
@@ -603,11 +663,19 @@ func ComposeUpdateManifest(
 		Assets:      assets,
 		LaunchAsset: launchAsset,
 	}
-	cacheValue, err := json.Marshal(manifest)
-	if err != nil {
-		return manifest, nil
+
+	// Before returning, validate that the manifest can be marshaled to JSON without errors
+	_, testErr := json.Marshal(manifest)
+	if testErr != nil {
+		log.Printf("ERROR: Invalid manifest JSON structure: %v", testErr)
+		return types.UpdateManifest{}, fmt.Errorf("generated manifest has invalid JSON structure: %w", testErr)
 	}
-	_ = cache.Set(cacheKey, string(cacheValue), nil)
+
+	// Store in cache
+	cacheValue, err := json.Marshal(manifest)
+	if err == nil {
+		_ = cache.Set(cacheKey, string(cacheValue), nil)
+	}
 
 	return manifest, nil
 }
