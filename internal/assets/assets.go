@@ -5,7 +5,6 @@ import (
 	"expo-open-ota/internal/cdn"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
-	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -107,6 +106,11 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 			requestID, i+1, update.UpdateId, update.BuildNumber)
 	}
 
+	// Use the newest update
+	latestUpdate := allUpdates[0]
+	log.Printf("[RequestID: %s] Using latest update: ID=%s, BuildNumber=%s",
+		requestID, latestUpdate.UpdateId, latestUpdate.BuildNumber)
+
 	// For non-asset return cases (just metadata)
 	if !returnAsset {
 		headers := map[string]string{
@@ -117,199 +121,175 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		return AssetsResponse{
 			StatusCode: http.StatusOK,
 			Headers:    headers,
-		}, nil, allUpdates[0].UpdateId, nil
+		}, nil, latestUpdate.UpdateId, nil
 	}
 
-	resolvedBucket := bucket.GetBucket()
+	// Get the metadata for this update
+	metadata, err := update.GetMetadata(latestUpdate)
+	if err != nil {
+		log.Printf("[RequestID: %s] Error getting metadata: %v", requestID, err)
+		return AssetsResponse{StatusCode: http.StatusInternalServerError, Body: []byte("Error getting metadata")}, nil, "", nil
+	}
 
-	// Try all updates, starting with the most recent one
-	var asset io.ReadCloser
-	var successfulUpdateId string
-	var assetMetadata types.Asset
+	// Determine which platform metadata to use
+	actualPlatform := req.Platform
+	if req.Platform == "all" {
+		log.Printf("[RequestID: %s] Platform 'all' specified in asset request, using 'ios'", requestID)
+		actualPlatform = "ios"
+	}
+
+	// Get platform-specific metadata
 	var platformMetadata types.PlatformMetadata
+	switch actualPlatform {
+	case "android":
+		platformMetadata = metadata.MetadataJSON.FileMetadata.Android
+	case "ios":
+		platformMetadata = metadata.MetadataJSON.FileMetadata.IOS
+	default:
+		return AssetsResponse{StatusCode: http.StatusBadRequest, Body: []byte("Platform not supported")}, nil, "", nil
+	}
+
+	// Identify if this is a launch asset (main JS bundle)
+	isLaunchAsset := false
+	var assetPath string
 	var contentType string
-	var isLaunchAsset bool
 
-	// Try each update, starting with the most recent
-	for _, currentUpdate := range allUpdates {
-		log.Printf("[RequestID: %s] ASSET-DEBUG: Trying update ID %s for asset %s (branch=%s, runtimeVersion=%s)",
-			requestID, currentUpdate.UpdateId, req.AssetName, req.Branch, req.RuntimeVersion)
+	// Log the bundle and requested asset for debugging
+	log.Printf("[RequestID: %s] Platform bundle path: %s", requestID, platformMetadata.Bundle)
+	log.Printf("[RequestID: %s] Requested asset path: %s", requestID, req.AssetName)
 
-		// Try to get the metadata for this update
-		metadata, metadataErr := update.GetMetadata(currentUpdate)
-		if metadataErr != nil {
-			log.Printf("[RequestID: %s] Error getting metadata for update %s: %v",
-				requestID, currentUpdate.UpdateId, metadataErr)
-			continue
-		}
-
-		// Determine which platform to use
-		actualPlatform := req.Platform
-		if req.Platform == "all" {
-			log.Printf("[RequestID: %s] Platform 'all' specified in asset request, using 'ios'", requestID)
-			actualPlatform = "ios"
-		}
-
-		// Get platform-specific metadata
-		switch actualPlatform {
-		case "android":
-			platformMetadata = metadata.MetadataJSON.FileMetadata.Android
-		case "ios":
-			platformMetadata = metadata.MetadataJSON.FileMetadata.IOS
-		default:
-			continue
-		}
-
-		// Check if this is the bundle (main JavaScript file)
-		bundle := platformMetadata.Bundle
-		isLaunchAsset = bundle == req.AssetName
-
-		// Special handling if this is a JavaScript bundle and we know the exact path from metadata
-		if isLaunchAsset && bundle != "" {
-			// The metadata contains the exact path for the bundle
-			log.Printf("[RequestID: %s] ASSET-DEBUG: This is a launch asset (bundle), using exact path from metadata: %s",
-				requestID, bundle)
-
-			// Try to get the bundle using the exact path from metadata
-			bundleAsset, bundleErr := resolvedBucket.GetFile(
-				currentUpdate.Branch,
-				currentUpdate.RuntimeVersion,
-				currentUpdate.UpdateId,
-				bundle)
-
-			if bundleErr == nil {
-				// Found the bundle!
-				asset = bundleAsset
-				successfulUpdateId = currentUpdate.UpdateId
-				contentType = "application/javascript"
-				log.Printf("[RequestID: %s] ASSET-DEBUG: Successfully found bundle in update %s using metadata path!",
-					requestID, currentUpdate.UpdateId)
-				break
-			} else {
-				log.Printf("[RequestID: %s] ASSET-DEBUG: Failed to find bundle using metadata path: %v",
-					requestID, bundleErr)
-			}
-		}
-
-		// Look for the requested asset in the assets list
-		foundAsset := false
+	// Check if this is the launch asset (main JS bundle)
+	if req.AssetName == platformMetadata.Bundle {
+		log.Printf("[RequestID: %s] Request is for the launch asset (main bundle)", requestID)
+		isLaunchAsset = true
+		assetPath = platformMetadata.Bundle
+		contentType = "application/javascript"
+	} else {
+		// Look for the asset in the assets list
+		found := false
 		for _, asset := range platformMetadata.Assets {
 			if asset.Path == req.AssetName {
-				assetMetadata = asset
-				foundAsset = true
+				log.Printf("[RequestID: %s] Found asset in metadata: %s (ext: %s)", requestID, asset.Path, asset.Ext)
+				found = true
+				contentType = mime.TypeByExtension("." + string(asset.Ext))
+				assetPath = asset.Path
 				break
 			}
 		}
 
-		// Set the content type based on asset type
+		if !found {
+			log.Printf("[RequestID: %s] Asset not found in metadata", requestID)
+			// Log all available assets for debugging
+			log.Printf("[RequestID: %s] Available assets in metadata:", requestID)
+			for i, asset := range platformMetadata.Assets {
+				log.Printf("[RequestID: %s]   Asset %d: %s", requestID, i+1, asset.Path)
+			}
+			return AssetsResponse{StatusCode: http.StatusNotFound, Body: []byte("Asset not found in metadata")}, nil, "", nil
+		}
+	}
+
+	// Get the bucket
+	resolvedBucket := bucket.GetBucket()
+
+	// Try to retrieve the asset file
+	log.Printf("[RequestID: %s] ASSET-DEBUG: Looking for asset %s in update %s/%s/%s",
+		requestID, assetPath, latestUpdate.Branch, latestUpdate.RuntimeVersion, latestUpdate.UpdateId)
+
+	// Create a function to try different asset path variations
+	tryAssetPaths := func() (io.ReadCloser, error) {
+		// Paths to try in order
+		pathsToTry := []string{
+			assetPath, // Original path from metadata
+		}
+
+		// For launch assets, add additional path variations
 		if isLaunchAsset {
-			contentType = "application/javascript"
-		} else if foundAsset {
-			contentType = mime.TypeByExtension("." + string(assetMetadata.Ext))
-		}
-
-		// Try to get the actual asset file
-		fullPath := currentUpdate.Branch + "/" + currentUpdate.RuntimeVersion + "/" + currentUpdate.UpdateId + "/" + req.AssetName
-		log.Printf("[RequestID: %s] ASSET-DEBUG: Trying to get asset at path: %s", requestID, fullPath)
-
-		// Try multiple path variants for bundle files (index.js)
-		assetErr := fmt.Errorf("not tried yet")
-		var assetFile io.ReadCloser
-
-		// First try the direct path
-		assetFile, assetErr = resolvedBucket.GetFile(
-			currentUpdate.Branch,
-			currentUpdate.RuntimeVersion,
-			currentUpdate.UpdateId,
-			req.AssetName)
-
-		// If direct path failed and it looks like a bundle file (_expo path)
-		if assetErr != nil && strings.HasPrefix(req.AssetName, "_expo/") {
-			log.Printf("[RequestID: %s] ASSET-DEBUG: Direct path failed, trying alternative paths for bundle file", requestID)
-
-			// Try without the _expo prefix
-			altAssetName := strings.TrimPrefix(req.AssetName, "_expo/")
-			log.Printf("[RequestID: %s] ASSET-DEBUG: Trying without _expo prefix: %s", requestID, altAssetName)
-			assetFile, assetErr = resolvedBucket.GetFile(
-				currentUpdate.Branch,
-				currentUpdate.RuntimeVersion,
-				currentUpdate.UpdateId,
-				altAssetName)
-
-			// Try with bundles/ prefix
-			if assetErr != nil {
-				bundlesPath := "bundles/" + req.AssetName
-				log.Printf("[RequestID: %s] ASSET-DEBUG: Trying with bundles/ prefix: %s", requestID, bundlesPath)
-				assetFile, assetErr = resolvedBucket.GetFile(
-					currentUpdate.Branch,
-					currentUpdate.RuntimeVersion,
-					currentUpdate.UpdateId,
-					bundlesPath)
+			// Remove _expo prefix if present
+			if strings.HasPrefix(assetPath, "_expo/") {
+				pathsToTry = append(pathsToTry, strings.TrimPrefix(assetPath, "_expo/"))
 			}
 
-			// Try with both bundle directory and flattened file name
-			if assetErr != nil {
-				parts := strings.Split(req.AssetName, "/")
-				if len(parts) > 0 {
-					fileName := parts[len(parts)-1]
-					log.Printf("[RequestID: %s] ASSET-DEBUG: Trying with just filename: %s", requestID, fileName)
-					assetFile, assetErr = resolvedBucket.GetFile(
-						currentUpdate.Branch,
-						currentUpdate.RuntimeVersion,
-						currentUpdate.UpdateId,
-						fileName)
-				}
+			// Add variant with bundles/ prefix
+			pathsToTry = append(pathsToTry, "bundles/"+assetPath)
+
+			// Extract filename only
+			parts := strings.Split(assetPath, "/")
+			if len(parts) > 0 {
+				pathsToTry = append(pathsToTry, parts[len(parts)-1])
 			}
-		}
-
-		// If direct path failed and it looks like an asset file (assets/ path)
-		if assetErr != nil && strings.HasPrefix(req.AssetName, "assets/") {
-			log.Printf("[RequestID: %s] ASSET-DEBUG: Direct path failed, trying alternative paths for asset file", requestID)
-
-			// Try without the assets/ prefix
-			assetName := strings.TrimPrefix(req.AssetName, "assets/")
-			log.Printf("[RequestID: %s] ASSET-DEBUG: Trying without assets/ prefix: %s", requestID, assetName)
-			assetFile, assetErr = resolvedBucket.GetFile(
-				currentUpdate.Branch,
-				currentUpdate.RuntimeVersion,
-				currentUpdate.UpdateId,
-				assetName)
-
-			// Try with just the asset hash (last part of path)
-			if assetErr != nil {
-				parts := strings.Split(req.AssetName, "/")
-				if len(parts) > 0 {
-					assetHash := parts[len(parts)-1]
-					log.Printf("[RequestID: %s] ASSET-DEBUG: Trying with just asset hash: %s", requestID, assetHash)
-					assetFile, assetErr = resolvedBucket.GetFile(
-						currentUpdate.Branch,
-						currentUpdate.RuntimeVersion,
-						currentUpdate.UpdateId,
-						assetHash)
-				}
-			}
-		}
-
-		if assetErr == nil {
-			// Found the asset!
-			asset = assetFile
-			successfulUpdateId = currentUpdate.UpdateId
-			log.Printf("[RequestID: %s] ASSET-DEBUG: Successfully found asset in update %s!",
-				requestID, currentUpdate.UpdateId)
-			break
 		} else {
-			log.Printf("[RequestID: %s] ASSET-DEBUG: Asset not found in update %s: %v",
-				requestID, currentUpdate.UpdateId, assetErr)
+			// For regular assets, try without assets/ prefix
+			if strings.HasPrefix(assetPath, "assets/") {
+				pathsToTry = append(pathsToTry, strings.TrimPrefix(assetPath, "assets/"))
+			}
+
+			// Try just the asset hash (last part)
+			parts := strings.Split(assetPath, "/")
+			if len(parts) > 0 {
+				pathsToTry = append(pathsToTry, parts[len(parts)-1])
+			}
+		}
+
+		// Try each path
+		var lastErr error
+		for _, pathToTry := range pathsToTry {
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Trying path: %s", requestID, pathToTry)
+			file, err := resolvedBucket.GetFile(
+				latestUpdate.Branch,
+				latestUpdate.RuntimeVersion,
+				latestUpdate.UpdateId,
+				pathToTry)
+
+			if err == nil {
+				log.Printf("[RequestID: %s] ASSET-DEBUG: Successfully found asset using path: %s", requestID, pathToTry)
+				return file, nil
+			}
+
+			lastErr = err
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Failed to find asset using path %s: %v", requestID, pathToTry, err)
+		}
+
+		return nil, lastErr
+	}
+
+	// Try to get the asset
+	asset, err := tryAssetPaths()
+	if err != nil {
+		log.Printf("[RequestID: %s] Error getting asset: %v", requestID, err)
+
+		// Try older updates as fallback
+		log.Printf("[RequestID: %s] ASSET-DEBUG: Trying older updates as fallback", requestID)
+		var fallbackAsset io.ReadCloser
+		var foundInFallback bool
+
+		for i := 1; i < len(allUpdates); i++ {
+			fallbackUpdate := allUpdates[i]
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Trying fallback update %s for asset %s",
+				requestID, fallbackUpdate.UpdateId, assetPath)
+
+			// Try all path variations in this update
+			fallbackAsset, err = resolvedBucket.GetFile(
+				fallbackUpdate.Branch,
+				fallbackUpdate.RuntimeVersion,
+				fallbackUpdate.UpdateId,
+				assetPath)
+
+			if err == nil {
+				log.Printf("[RequestID: %s] ASSET-DEBUG: Found asset in fallback update %s!",
+					requestID, fallbackUpdate.UpdateId)
+				foundInFallback = true
+				latestUpdate = fallbackUpdate
+				asset = fallbackAsset
+				break
+			}
+		}
+
+		if !foundInFallback {
+			log.Printf("[RequestID: %s] ASSET-DEBUG: Asset not found in any update", requestID)
+			return AssetsResponse{StatusCode: http.StatusNotFound, Body: []byte("Asset not found in any update")}, nil, "", nil
 		}
 	}
 
-	// If we couldn't find the asset in any update
-	if asset == nil {
-		log.Printf("[RequestID: %s] ASSET-DEBUG: Asset not found in any update: %s", requestID, req.AssetName)
-		return AssetsResponse{StatusCode: http.StatusNotFound, Body: []byte("Asset not found")}, nil, "", nil
-	}
-
-	// Asset found - return it with the appropriate headers
 	headers := map[string]string{
 		"expo-protocol-version": "1",
 		"expo-sfv-version":      "0",
@@ -326,7 +306,7 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 		StatusCode:  http.StatusOK,
 		Headers:     headers,
 		ContentType: contentType,
-	}, bucketFile, successfulUpdateId, nil
+	}, bucketFile, latestUpdate.UpdateId, nil
 }
 
 func HandleAssetsWithFile(req AssetsRequest) (AssetsResponse, error) {
