@@ -95,7 +95,6 @@ export default class Publish extends Command {
     const vcsClient = resolveVcsClient(true);
     await vcsClient.ensureRepoExistsAsync();
     const commitHash = await vcsClient.getCommitHashAsync();
-    await ensureRepoIsCleanAsync(vcsClient, nonInteractive);
 
     const projectDir = process.cwd();
     const hasExpo = isExpoInstalled(projectDir);
@@ -112,6 +111,125 @@ export default class Publish extends Command {
       );
       process.exit(1);
     }
+
+    // Check if build number matches the one in app.config.js
+    const appBuildNumber = privateConfig.extra?.buildNumber || privateConfig.extra?.updateCode;
+    
+    // Extract numeric part from updateCode if it's in format "build-XX"
+    let configBuildNumber = appBuildNumber;
+    if (typeof configBuildNumber === 'string' && configBuildNumber.startsWith('build-')) {
+      configBuildNumber = configBuildNumber.replace('build-', '');
+    }
+    
+    // Check if build number from command matches app.config.js
+    if (_buildNumber && configBuildNumber !== _buildNumber) {
+      Log.warn(`⚠️  Build number mismatch detected:`);
+      Log.warn(`   - Command flag: --build-number ${_buildNumber}`);
+      Log.warn(`   - app.config.js: ${appBuildNumber}`);
+      
+      if (!nonInteractive) {
+        const updateConfigConfirmed = await confirmAsync({
+          message: `Would you like to update your app.config.js to match the build number from command (${_buildNumber})?`,
+          name: 'updateBuildNumber',
+          type: 'confirm',
+        });
+        
+        if (updateConfigConfirmed) {
+          // Find and update app.config.js
+          try {
+            const configSpinner = ora('🔄 Updating app.config.js with new build number...').start();
+            
+            // Try to find app.config.js or app.json
+            const possibleConfigFiles = [
+              path.join(projectDir, 'app.config.js'),
+              path.join(projectDir, 'app.config.ts'),
+              path.join(projectDir, 'app.json')
+            ];
+            
+            let configFile = '';
+            for (const file of possibleConfigFiles) {
+              if (fs.existsSync(file)) {
+                configFile = file;
+                break;
+              }
+            }
+            
+            if (!configFile) {
+              configSpinner.fail('Could not find app.config.js, app.config.ts, or app.json');
+              process.exit(1);
+            }
+            
+            // Read the config file
+            let fileContent = fs.readFileSync(configFile, 'utf8');
+            
+            // For JS/TS files, use regex to update
+            if (configFile.endsWith('.js') || configFile.endsWith('.ts')) {
+              // Update updateCode if it exists
+              if (privateConfig.extra?.updateCode) {
+                const newUpdateCode = `build-${_buildNumber}`;
+                fileContent = fileContent.replace(
+                  /updateCode\s*:\s*["']build-\d+["']/,
+                  `updateCode: "${newUpdateCode}"`
+                );
+              } 
+              // Update buildNumber if it exists
+              else if (privateConfig.extra?.buildNumber) {
+                fileContent = fileContent.replace(
+                  /buildNumber\s*:\s*["']\d+["']/,
+                  `buildNumber: "${_buildNumber}"`
+                );
+              }
+            } 
+            // For JSON files
+            else if (configFile.endsWith('.json')) {
+              const jsonConfig = JSON.parse(fileContent);
+              if (!jsonConfig.extra) {
+                jsonConfig.extra = {};
+              }
+              
+              if (privateConfig.extra?.updateCode) {
+                jsonConfig.extra.updateCode = `build-${_buildNumber}`;
+              } else {
+                jsonConfig.extra.buildNumber = _buildNumber;
+              }
+              
+              fileContent = JSON.stringify(jsonConfig, null, 2);
+            }
+            
+            // Write the updated content back
+            fs.writeFileSync(configFile, fileContent, 'utf8');
+            configSpinner.succeed(`✅ Updated ${configFile} with build number ${_buildNumber}`);
+            
+            // Note that we've made changes that need to be committed
+            Log.log('Please review and commit these changes before proceeding.');
+          } catch (error) {
+            Log.error(`Failed to update build number in config: ${error}`);
+            process.exit(1);
+          }
+        } else {
+          // User declined to update config
+          const proceedAnyway = await confirmAsync({
+            message: 'Proceed with mismatched build numbers? (not recommended)',
+            name: 'proceedWithMismatch',
+            type: 'confirm',
+          });
+          
+          if (!proceedAnyway) {
+            Log.error('Operation cancelled. Please either:');
+            Log.error(`1. Run with matching build number: --build-number ${configBuildNumber}`);
+            Log.error(`2. Update your app.config.js to use: ${_buildNumber}`);
+            process.exit(1);
+          }
+          
+          Log.warn('⚠️  Proceeding with mismatched build numbers (not recommended)');
+        }
+      } else {
+        Log.warn('✅  Matching build number: ' + _buildNumber);
+      }
+    }
+
+    // Now check if repo is clean after possibly updating the config file
+    await ensureRepoIsCleanAsync(vcsClient, nonInteractive);
 
     let baseUrl: string;
     try {
@@ -153,8 +271,8 @@ export default class Publish extends Command {
     }
 
     // Remove Firebase token check
-    const appBuildNumber = privateConfig.extra?.buildNumber || privateConfig.extra?.updateCode;
-    if (!appBuildNumber) {
+    const updatedAppBuildNumber = privateConfig.extra?.buildNumber || privateConfig.extra?.updateCode;
+    if (!updatedAppBuildNumber) {
       Log.error('Build number or update code is required in app.config.js extra field');
       process.exit(1);
     }
@@ -347,7 +465,7 @@ export default class Publish extends Command {
         runtimeVersion: runtimeVersions[0].runtimeVersion || '',
         platform: runtimeVersions[0].platform,
         commitHash,
-        buildNumber: _buildNumber || appBuildNumber,
+        buildNumber: _buildNumber || updatedAppBuildNumber,
       });
 
       const { uploadRequests } = result;

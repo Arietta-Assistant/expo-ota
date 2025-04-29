@@ -1,35 +1,58 @@
-# Expo Open OTA
-![Expo Open OTA Deployment](docs/static/img/social_card.png)
+# Ariel OTA
+![Ariel OTA Deployment](docs/static/img/social_card.png)
 
-[![Push workflow](https://github.com/axelmarciano/expo-open-ota/actions/workflows/push.yml/badge.svg)](https://github.com/axelmarciano/expo-open-ota/actions/workflows/push.yml)
 
-🚀 **An open-source Go implementation of the Expo Updates protocol, designed for production with support for cloud storage like S3 and CDN integration, delivering fast and reliable OTA updates for React Native apps.**
+
+🚀 **A fully autonomous over-the-air update server for React Native apps made by Arietta AB. Ariel OTA is capable of running completely without Expo EAS while maintaining compatibility with the Expo Updates protocol.**
+
+## 📝 About
+
+Ariel OTA is developed and maintained by [Arietta AB](https://meet-ariel.com). This project is forked from [axelmarciano's expo-open-ota](https://github.com/axelmarciano/expo-open-ota).
 
 ## ⚠️ Disclaimer
 
-**Expo Open OTA is not officially supported or affiliated with [Expo](https://expo.dev/).**  
-This is an independent open-source project.
+**Ariel OTA is not officially supported or affiliated with [Expo](https://expo.dev/).**  
+This is an independent project by Arietta AB.
 
 ## 📖 Documentation
 
 The full documentation is available at:  
-➡️ [Documentation](https://axelmarciano.github.io/expo-open-ota/)
+➡️ [Documentation](https://help.meet-ariel.com//)
 
 ## 🛠 Features
 
-- **Self-hosted OTA update server** for Expo applications.
-- **Cloud storage support**: AWS S3, local storage, and more.
+- **Self-hosted OTA update server** for React Native applications.
+- **Completely independent** from Expo EAS services.
+- **Cloud storage support**: Firebase, AWS S3, local storage, and more.
 - **CDN integration**: Optimized for CloudFront and other CDN providers.
-- **Secure key management**: Supports AWS Secrets Manager and environment-based key storage.
+- **Secure key management**: Supports Firebase authication, AWS Secrets Manager and environment-based key storage.
 - **Production-ready**: Designed for scalability and performance.
+- **Build and Runtime**: Ariel OTA have custom flags to handle builds and runtime without Expo ETA
 
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE.md) file for details.
 
+## Development
 
+### Rebuild the eoas CLI locally for updates publishing
 
-## Rebuild the eoas cli locally for eoas updates publishing
+```
+cd eoas && npm run build
+```
 
+### Install eoas CLI globally
 
-root cd eoas && npm run build
+To use the eoas CLI from anywhere on your computer, install it globally:
+
+```
+npm install -g ./eoas
+```
+
+Alternatively, you can link your local development version:
+
+```
+cd eoas && npm link
+```
+
+After installation, you can run `eoas` commands from any directory.
