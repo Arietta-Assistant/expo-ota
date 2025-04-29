@@ -160,7 +160,16 @@ export default class Publish extends Command {
 
     const spinner = ora('Publishing update').start();
     try {
-      // First, run 'npx expo export' to generate updated bundles
+      // First, clean up the dist directory
+      spinner.text = 'Cleaning output directory...';
+      try {
+        await fs.remove(path.join(projectDir, 'dist'));
+        Log.debug('Cleaned output directory');
+      } catch (error) {
+        Log.warn('Error cleaning output directory:', error);
+      }
+      
+      // Export the project with proper options
       spinner.text = 'Exporting the project...';
       
       // Determine which platforms to export
@@ -170,9 +179,8 @@ export default class Publish extends Command {
           ? 'android' 
           : 'ios';
           
-      // Build the export command with the runtime version
-      // Add --output-dir and explicitly create expoConfig.json in the dist directory
-      const exportCmd = `npx expo export --platform=${platformArg} --dump-sourcemap --asset-manifest --output-dir=./dist`;
+      // Export with all necessary flags
+      const exportCmd = `npx expo export --platform=${platformArg} --dump-sourcemap --dump-assetmap --asset-manifest --output-dir=./dist`;
       
       try {
         const { execSync } = require('child_process');
@@ -180,36 +188,50 @@ export default class Publish extends Command {
         const result = execSync(exportCmd, { 
           cwd: projectDir,
           stdio: 'pipe', // Capture output
-          encoding: 'utf-8'
+          encoding: 'utf-8',
+          env: {
+            ...process.env,
+            EXPO_NO_DOTENV: '1', // Ensure consistent behavior
+          }
         });
         Log.debug(`Export completed: ${result}`);
-
-        // Manually create expoConfig.json if it doesn't exist
-        const distDir = path.join(projectDir, 'dist');
-        const expoConfigPath = path.join(distDir, 'expoConfig.json');
         
-        if (!fs.existsSync(expoConfigPath)) {
-          Log.debug('expoConfig.json not found, creating it manually');
-          
-          // Create a simple config that includes critical info
-          const simpleConfig = {
-            name: privateConfig.name || 'ExpoApp',
-            slug: privateConfig.slug || 'expo-app',
-            version: privateConfig.version || '1.0.0',
-            runtimeVersion: runtimeVersionResult.runtimeVersion,
-            extra: {
-              buildNumber: _buildNumber || appBuildNumber,
-              updateCode: _buildNumber || appBuildNumber,
-            }
-          };
-          
-          // Write the config to the dist directory
-          fs.writeFileSync(expoConfigPath, JSON.stringify(simpleConfig, null, 2));
-          Log.debug(`Created expoConfig.json at ${expoConfigPath}`);
+        // Verify metadata.json exists
+        const metadataPath = path.join(projectDir, 'dist', 'metadata.json');
+        if (!fs.existsSync(metadataPath)) {
+          spinner.fail('Export failed to generate metadata.json');
+          Log.error('The export command did not generate the required metadata.json file');
+          process.exit(1);
         }
+        
+        // Get public config and create expoConfig.json from it
+        spinner.text = 'Creating expoConfig.json...';
+        
+        // Write expoConfig.json from privateConfig
+        await fs.writeJson(
+          path.join(projectDir, 'dist', 'expoConfig.json'), 
+          {
+            name: privateConfig.name || 'app',
+            slug: privateConfig.slug || 'app',
+            version: privateConfig.version || '1.0.0',
+            sdkVersion: privateConfig.sdkVersion,
+            runtimeVersion: runtimeVersionResult.runtimeVersion,
+            orientation: privateConfig.orientation,
+            icon: privateConfig.icon,
+            userInterfaceStyle: privateConfig.userInterfaceStyle,
+            splash: privateConfig.splash,
+            updates: privateConfig.updates,
+            assetBundlePatterns: privateConfig.assetBundlePatterns,
+            ios: privateConfig.ios,
+            android: privateConfig.android,
+            extra: privateConfig.extra || {},
+          },
+          { spaces: 2 }
+        );
+        Log.debug('Created expoConfig.json');
       } catch (error) {
         spinner.fail('Export failed');
-        Log.error('Failed to export the project. Please make sure Expo CLI is installed.');
+        Log.error('Failed to export the project.');
         Log.error(error);
         process.exit(1);
       }
