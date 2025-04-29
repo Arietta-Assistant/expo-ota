@@ -184,8 +184,38 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 		return
 	}
 
+	// Ensure that manifest has all the required fields and structure
+	if manifest.LaunchAsset.Key == "" || manifest.LaunchAsset.Url == "" {
+		log.Printf("[RequestID: %s] WARNING: LaunchAsset missing key or URL - this may cause updates to fail", requestID)
+
+		// Try to fix missing LaunchAsset URL if needed
+		resolvedBucket := bucket.GetBucket()
+
+		// Special handling for JS bundle - try to find any JS file that could be used
+		jsFiles := []string{"bundle.js", "index.js", "app.js", "index.bundle", "app.bundle"}
+
+		for _, jsFile := range jsFiles {
+			_, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, jsFile)
+			if err == nil {
+				log.Printf("[RequestID: %s] Found potential bundle file: %s", requestID, jsFile)
+				// Update the manifest to use this file
+				if manifest.LaunchAsset.Key == "" {
+					manifest.LaunchAsset.Key = jsFile
+				}
+				manifest.LaunchAsset.Url = fmt.Sprintf("/assets/%s/%s/%s/%s?platform=%s",
+					lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, jsFile, platform)
+				break
+			}
+		}
+	}
+
 	metrics.TrackUpdateDownload(platform, lastUpdate.RuntimeVersion, lastUpdate.Branch, metadata.ID, "update")
 	log.Printf("[RequestID: %s] Update download tracked successfully", requestID)
+
+	// Log the complete manifest being sent for debugging purposes
+	manifestJSON, _ := json.MarshalIndent(manifest, "", "  ")
+	log.Printf("[RequestID: %s] Sending manifest to client: %s", requestID, string(manifestJSON))
+
 	putResponse(w, r, manifest, "manifest", lastUpdate.RuntimeVersion, protocolVersion, requestID)
 }
 

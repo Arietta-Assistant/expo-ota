@@ -144,23 +144,38 @@ func (b *FirebaseBucket) GetFile(branch string, runtimeVersion string, updateId 
 
 	// Check if the file exists
 	obj := b.bucket.Object(objectPath)
-	attrs, err := obj.Attrs(context.Background())
+	ctx := context.Background()
+	attrs, err := obj.Attrs(ctx)
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
 			log.Printf("FIREBASE-DEBUG: File not found: %s", objectPath)
 
-			// Also try with just the asset name in case that's how it's stored
-			if strings.HasPrefix(fileName, "assets/") {
-				alternativePath := path.Join("updates", branch, runtimeVersion, updateId, strings.TrimPrefix(fileName, "assets/"))
-				log.Printf("FIREBASE-DEBUG: Trying alternative path without 'assets/' prefix: %s", alternativePath)
-				altObj := b.bucket.Object(alternativePath)
-				altAttrs, altErr := altObj.Attrs(context.Background())
+			// Try all of these alternative paths
+			alternativePaths := []string{
+				// Common path transformations for assets
+				path.Join("updates", branch, runtimeVersion, updateId, strings.TrimPrefix(fileName, "assets/")),
+				path.Join("updates", branch, runtimeVersion, updateId, "assets", fileName),
+				path.Join("updates", branch, runtimeVersion, updateId, "assets", path.Base(fileName)),
+			}
+
+			// Special handling for JavaScript bundles
+			if strings.HasSuffix(fileName, ".js") || strings.HasSuffix(fileName, ".bundle") {
+				alternativePaths = append(alternativePaths,
+					path.Join("updates", branch, runtimeVersion, updateId, "bundle.js"),
+					path.Join("updates", branch, runtimeVersion, updateId, "index.js"),
+					path.Join("updates", branch, runtimeVersion, updateId, "app.bundle"),
+					path.Join("updates", branch, runtimeVersion, updateId, "index.bundle"))
+			}
+
+			// Try each alternative path
+			for _, altPath := range alternativePaths {
+				log.Printf("FIREBASE-DEBUG: Trying alternative path: %s", altPath)
+				altObj := b.bucket.Object(altPath)
+				altAttrs, altErr := altObj.Attrs(ctx)
 				if altErr == nil {
 					log.Printf("FIREBASE-DEBUG: Found file at alternative path with size: %d bytes, created: %v",
 						altAttrs.Size, altAttrs.Created)
-					return b.bucket.Object(alternativePath).NewReader(context.Background())
-				} else {
-					log.Printf("FIREBASE-DEBUG: Alternative path also not found: %s", alternativePath)
+					return b.bucket.Object(altPath).NewReader(ctx)
 				}
 			}
 
@@ -170,8 +185,10 @@ func (b *FirebaseBucket) GetFile(branch string, runtimeVersion string, updateId 
 			query := &storage.Query{
 				Prefix: dirPath,
 			}
-			it := b.bucket.Objects(context.Background(), query)
+			it := b.bucket.Objects(ctx, query)
 			count := 0
+			fileNames := []string{}
+
 			for {
 				attrs, err := it.Next()
 				if err == iterator.Done {
@@ -181,12 +198,35 @@ func (b *FirebaseBucket) GetFile(branch string, runtimeVersion string, updateId 
 					log.Printf("FIREBASE-DEBUG: Error listing objects: %v", err)
 					break
 				}
-				log.Printf("FIREBASE-DEBUG: Found object: %s", attrs.Name)
+
+				// Extract just the filename from the path
+				relativePath := strings.TrimPrefix(attrs.Name, dirPath+"/")
+				fileNames = append(fileNames, relativePath)
 				count++
-				if count >= 20 {
-					log.Printf("FIREBASE-DEBUG: Stopping after 20 objects")
+
+				if count >= 50 {
+					log.Printf("FIREBASE-DEBUG: Stopping after 50 objects")
 					break
 				}
+			}
+
+			// If we found files but not the one we want, log available files
+			if len(fileNames) > 0 {
+				log.Printf("FIREBASE-DEBUG: Found %d files in update but not the requested file:", len(fileNames))
+				for i, name := range fileNames {
+					log.Printf("FIREBASE-DEBUG:   %d: %s", i+1, name)
+
+					// Special handling for JS files - if we're looking for a JS file and find one
+					if (strings.HasSuffix(fileName, ".js") || strings.HasSuffix(fileName, ".bundle")) &&
+						(strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".bundle")) {
+
+						log.Printf("FIREBASE-DEBUG: Found potential JS bundle match: %s", name)
+						matchPath := path.Join(dirPath, name)
+						return b.bucket.Object(matchPath).NewReader(ctx)
+					}
+				}
+			} else {
+				log.Printf("FIREBASE-DEBUG: No files found in update directory")
 			}
 		} else {
 			log.Printf("FIREBASE-DEBUG: Error checking file existence: %v", err)
@@ -197,8 +237,8 @@ func (b *FirebaseBucket) GetFile(branch string, runtimeVersion string, updateId 
 	}
 
 	// Special debug for metadata.json
-	if fileName == "metadata.json" {
-		reader, err := b.bucket.Object(objectPath).NewReader(context.Background())
+	if fileName == "metadata.json" || fileName == "update-metadata.json" {
+		reader, err := b.bucket.Object(objectPath).NewReader(ctx)
 		if err != nil {
 			log.Printf("DEBUG: Error reading metadata file: %v", err)
 			return nil, fmt.Errorf("error reading metadata file: %w", err)
@@ -223,7 +263,7 @@ func (b *FirebaseBucket) GetFile(branch string, runtimeVersion string, updateId 
 		return io.NopCloser(bytes.NewReader(content)), nil
 	}
 
-	return b.bucket.Object(objectPath).NewReader(context.Background())
+	return b.bucket.Object(objectPath).NewReader(ctx)
 }
 
 func (b *FirebaseBucket) UploadFileIntoUpdate(update types.Update, fileName string, content io.Reader) error {

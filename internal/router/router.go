@@ -12,9 +12,42 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
+
+// Debug logging middleware
+func debugLoggerMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestID := uuid.New().String()
+
+		// Log request details
+		log.Printf("[RequestID: %s] Incoming %s request: %s",
+			requestID, c.Request.Method, c.Request.URL.Path)
+
+		// Log headers
+		log.Printf("[RequestID: %s] Request headers:", requestID)
+		for k, v := range c.Request.Header {
+			log.Printf("[RequestID: %s]   %s: %v", requestID, k, v)
+		}
+
+		// Set request ID in context
+		c.Set("requestID", requestID)
+
+		// Track processing time
+		startTime := time.Now()
+
+		// Process request
+		c.Next()
+
+		// Log response details
+		duration := time.Since(startTime)
+		log.Printf("[RequestID: %s] Request completed in %v with status %d",
+			requestID, duration, c.Writer.Status())
+	}
+}
 
 // SetupRoutes configures all routes on the provided router
 func SetupRoutes(router *gin.Engine) {
@@ -63,11 +96,45 @@ func SetupRoutes(router *gin.Engine) {
 		api.POST("/update/request-upload-url/:branch", middleware.AuthMiddleware, handlers.RequestUploadUrlHandler)
 		api.POST("/update/request-upload-urls/:branch", handlers.RequestUploadUrlHandler)
 		api.POST("/update/mark-uploaded/:branch", middleware.AuthMiddleware, handlers.MarkUpdateAsUploadedHandler)
-		api.GET("/update/manifest/:branch/:runtimeVersion", handlers.ManifestHandler)
-		api.GET("/update/assets/:path", handlers.AssetsHandler)
-		api.GET("/update/assets", handlers.AssetsHandler)
+		api.GET("/update/manifest/:branch/:runtimeVersion", debugLoggerMiddleware(), handlers.ManifestHandler)
+		api.GET("/update/assets/:path", debugLoggerMiddleware(), handlers.AssetsHandler)
+		api.GET("/update/assets", debugLoggerMiddleware(), handlers.AssetsHandler)
 		api.GET("/debug/updates/:branch/:runtimeVersion", handlers.ListUpdatesHandler)
 	}
+
+	// Special asset routes needed by Expo Updates
+	// This adds compatibility with how Expo's fetchUpdateAsync looks for assets
+	router.GET("/assets/:branch/:runtimeVersion/:updateId/*assetPath", debugLoggerMiddleware(), func(c *gin.Context) {
+		branch := c.Param("branch")
+		runtimeVersion := c.Param("runtimeVersion")
+		updateId := c.Param("updateId")
+		assetPath := c.Param("assetPath")
+
+		// Strip leading slash from assetPath if present
+		if strings.HasPrefix(assetPath, "/") {
+			assetPath = assetPath[1:]
+		}
+
+		platform := c.DefaultQuery("platform", "ios") // Default to iOS if not specified
+
+		requestID := c.GetString("requestID")
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
+
+		log.Printf("[RequestID: %s] Direct asset request: %s/%s/%s/%s (platform: %s)",
+			requestID, branch, runtimeVersion, updateId, assetPath, platform)
+
+		// This works by reusing the path parameter handler in AssetsHandler
+		// We format the path to match what AssetsHandler expects
+		completePath := fmt.Sprintf("%s/%s/%s/%s", branch, runtimeVersion, updateId, assetPath)
+		c.Params = append(c.Params, gin.Param{Key: "path", Value: completePath})
+
+		// Set the platform as a query parameter
+		c.Request.URL.RawQuery = fmt.Sprintf("platform=%s", platform)
+
+		handlers.AssetsHandler(c)
+	})
 
 	// Dashboard frontend route
 	if dashboard.IsDashboardEnabled() {

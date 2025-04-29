@@ -197,20 +197,22 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 
 	// Create a function to try different asset path variations
 	tryAssetPaths := func() (io.ReadCloser, error) {
-		// Paths to try in order
+		// Paths to try in order - add more variations to increase chances of finding assets
 		pathsToTry := []string{
 			assetPath, // Original path from metadata
 		}
 
-		// For launch assets, add additional path variations
+		// For launch assets (main bundle), add additional path variations
 		if isLaunchAsset {
-			// Remove _expo prefix if present
-			if strings.HasPrefix(assetPath, "_expo/") {
-				pathsToTry = append(pathsToTry, strings.TrimPrefix(assetPath, "_expo/"))
-			}
-
-			// Add variant with bundles/ prefix
-			pathsToTry = append(pathsToTry, "bundles/"+assetPath)
+			// Common variations for bundle paths
+			pathsToTry = append(pathsToTry,
+				strings.TrimPrefix(assetPath, "_expo/"),
+				"bundles/"+assetPath,
+				"bundle.js",
+				"index.bundle",
+				"app.bundle",
+				"app.js",
+				"index.js")
 
 			// Extract filename only
 			parts := strings.Split(assetPath, "/")
@@ -218,9 +220,14 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 				pathsToTry = append(pathsToTry, parts[len(parts)-1])
 			}
 		} else {
-			// For regular assets, try without assets/ prefix
+			// For regular assets, try more path variations
 			if strings.HasPrefix(assetPath, "assets/") {
 				pathsToTry = append(pathsToTry, strings.TrimPrefix(assetPath, "assets/"))
+			}
+
+			// Try with assets prefix if not already there
+			if !strings.HasPrefix(assetPath, "assets/") {
+				pathsToTry = append(pathsToTry, "assets/"+assetPath)
 			}
 
 			// Try just the asset hash (last part)
@@ -229,6 +236,10 @@ func getAssetMetadata(req AssetsRequest, returnAsset bool) (AssetsResponse, *typ
 				pathsToTry = append(pathsToTry, parts[len(parts)-1])
 			}
 		}
+
+		// Log all paths we're going to try
+		log.Printf("[RequestID: %s] ASSET-DEBUG: Will try %d path variations for asset",
+			requestID, len(pathsToTry))
 
 		// Try each path
 		var lastErr error
