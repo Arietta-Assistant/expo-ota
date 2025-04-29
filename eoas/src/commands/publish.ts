@@ -4,6 +4,7 @@ import fs from 'fs-extra';
 import https from 'https';
 import mime from 'mime';
 import url from 'url';
+import path from 'path';
 
 import { computeFilesRequests, requestUploadUrls } from '../lib/assets';
 import {
@@ -170,6 +171,7 @@ export default class Publish extends Command {
           : 'ios';
           
       // Build the export command with the runtime version
+      // Add --output-dir and explicitly create expoConfig.json in the dist directory
       const exportCmd = `npx expo export --platform=${platformArg} --dump-sourcemap --asset-manifest --output-dir=./dist`;
       
       try {
@@ -181,6 +183,30 @@ export default class Publish extends Command {
           encoding: 'utf-8'
         });
         Log.debug(`Export completed: ${result}`);
+
+        // Manually create expoConfig.json if it doesn't exist
+        const distDir = path.join(projectDir, 'dist');
+        const expoConfigPath = path.join(distDir, 'expoConfig.json');
+        
+        if (!fs.existsSync(expoConfigPath)) {
+          Log.debug('expoConfig.json not found, creating it manually');
+          
+          // Create a simple config that includes critical info
+          const simpleConfig = {
+            name: privateConfig.name || 'ExpoApp',
+            slug: privateConfig.slug || 'expo-app',
+            version: privateConfig.version || '1.0.0',
+            runtimeVersion: runtimeVersionResult.runtimeVersion,
+            extra: {
+              buildNumber: _buildNumber || appBuildNumber,
+              updateCode: _buildNumber || appBuildNumber,
+            }
+          };
+          
+          // Write the config to the dist directory
+          fs.writeFileSync(expoConfigPath, JSON.stringify(simpleConfig, null, 2));
+          Log.debug(`Created expoConfig.json at ${expoConfigPath}`);
+        }
       } catch (error) {
         spinner.fail('Export failed');
         Log.error('Failed to export the project. Please make sure Expo CLI is installed.');

@@ -96,10 +96,14 @@ export function computeFilesRequests(
     { path: path.join(distDir, 'metadata.json'), name: 'metadata.json', ext: 'json' },
   ];
   
-  // Add expo config if available
+  // Add expo config if available (but don't require it)
   const expoConfigPath = path.join(distDir, 'expoConfig.json');
   if (fs.existsSync(expoConfigPath)) {
+    Log.debug('Found expoConfig.json, adding to assets');
     assets.push({ path: expoConfigPath, name: 'expoConfig.json', ext: 'json' });
+  } else {
+    Log.debug('expoConfig.json not found - this is OK, it will be generated if needed');
+    // We don't throw an error here since the file is optional
   }
   
   // Process each platform
