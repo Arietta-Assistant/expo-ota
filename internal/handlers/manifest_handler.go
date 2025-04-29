@@ -74,49 +74,28 @@ func writeResponse(w http.ResponseWriter, writer *multipart.Writer, buf *bytes.B
 	}
 }
 
-func putResponse(w http.ResponseWriter, r *http.Request, data interface{}, kind string, runtimeVersion string, protocolVersion int64, requestID string) {
-	// Add debug logging for every response
-	log.Printf("[RequestID: %s] Sending %s response for runtime version %s", requestID, kind, runtimeVersion)
-
-	// Set proper response headers
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("expo-protocol-version", strconv.FormatInt(protocolVersion, 10))
-	w.Header().Set("expo-sfv-version", "0")
-	w.Header().Set("Cache-Control", "private, max-age=0")
-
-	// First marshal the data with proper indentation for logging
-	formattedBytes, err := json.MarshalIndent(data, "", "  ")
+func putResponse(w http.ResponseWriter, r *http.Request, content interface{}, fieldName string, runtimeVersion string, protocolVersion int64, requestID string) {
+	signedHash, err := signDirectiveOrManifest(content, r.Header.Get("expo-expect-signature"))
 	if err != nil {
-		log.Printf("[RequestID: %s] ERROR - Failed to format response payload for logging: %v", requestID, err)
-	} else {
-		// Log the first 500 chars of formatted JSON to keep logs manageable
-		logPreview := string(formattedBytes)
-		if len(logPreview) > 500 {
-			logPreview = logPreview[:500] + "...[truncated]"
-		}
-		log.Printf("[RequestID: %s] DEBUG - Response payload preview:\n%s", requestID, logPreview)
-	}
-
-	// Then marshal again without indentation for the actual response
-	// This ensures we're sending compact JSON for efficiency
-	payloadBytes, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("[RequestID: %s] ERROR - Failed to marshal response payload: %v", requestID, err)
-		http.Error(w, "Error generating response", http.StatusInternalServerError)
+		log.Printf("[RequestID: %s] Error signing content: %v", requestID, err)
+		http.Error(w, "Error signing content", http.StatusInternalServerError)
 		return
 	}
-
-	log.Printf("[RequestID: %s] DEBUG - Response payload size: %d bytes", requestID, len(payloadBytes))
-
-	// Set the status code and write the response
-	w.WriteHeader(http.StatusOK)
-	_, err = w.Write(payloadBytes)
+	headers := map[string][]string{
+		"Content-Disposition": {fmt.Sprintf("form-data; name=\"%s\"", fieldName)},
+		"Content-Type":        {"application/json"},
+		"content-type":        {"application/json; charset=utf-8"},
+	}
+	if signedHash != "" {
+		headers["expo-signature"] = []string{fmt.Sprintf("sig=\"%s\", keyid=\"main\"", signedHash)}
+	}
+	writer, buf, err := createMultipartResponse(headers, content)
 	if err != nil {
-		log.Printf("[RequestID: %s] ERROR - Failed to write response: %v", requestID, err)
+		log.Printf("[RequestID: %s] Error creating multipart response: %v", requestID, err)
+		http.Error(w, "Error creating multipart response", http.StatusInternalServerError)
 		return
 	}
-
-	log.Printf("[RequestID: %s] Response successfully sent", requestID)
+	writeResponse(w, writer, buf, protocolVersion, runtimeVersion, requestID)
 }
 
 func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate types.Update, platform string, protocolVersion int64, requestID string) {
@@ -135,35 +114,19 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 	currentBuild := ""
 	extraParams := r.Header.Get("Expo-Extra-Params")
 	if extraParams != "" {
-		log.Printf("[RequestID: %s] DEBUG - Full Expo-Extra-Params value: %s", requestID, extraParams)
-
-		// Try parsing as JSON first
-		var extraParamsMap map[string]string
-		err := json.Unmarshal([]byte(extraParams), &extraParamsMap)
-		if err == nil {
-			// Successfully parsed as JSON
-			log.Printf("[RequestID: %s] DEBUG - Successfully parsed Expo-Extra-Params as JSON", requestID)
-			if bn, ok := extraParamsMap["expo-build-number"]; ok {
-				currentBuild = bn
-				log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params JSON: %s", requestID, currentBuild)
-			}
-		} else {
-			log.Printf("[RequestID: %s] DEBUG - Failed to parse Expo-Extra-Params as JSON: %v", requestID, err)
-
-			// Parse the extra params format: expo-build-number="build-5"
-			extraParamsParts := strings.Split(extraParams, ",")
-			for _, part := range extraParamsParts {
-				part = strings.TrimSpace(part)
-				if strings.Contains(part, "expo-build-number") {
-					// Extract the value between quotes
-					start := strings.Index(part, "\"")
-					end := strings.LastIndex(part, "\"")
-					if start != -1 && end != -1 && end > start {
-						currentBuild = part[start+1 : end]
-						log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, currentBuild)
-					}
-					break
+		// Parse the extra params format: expo-build-number="build-5"
+		extraParamsParts := strings.Split(extraParams, ",")
+		for _, part := range extraParamsParts {
+			part = strings.TrimSpace(part)
+			if strings.Contains(part, "expo-build-number") {
+				// Extract the value between quotes
+				start := strings.Index(part, "\"")
+				end := strings.LastIndex(part, "\"")
+				if start != -1 && end != -1 && end > start {
+					currentBuild = part[start+1 : end]
+					log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, currentBuild)
 				}
+				break
 			}
 		}
 	}
@@ -218,43 +181,6 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 	if err != nil {
 		log.Printf("[RequestID: %s] Error composing manifest: %v", requestID, err)
 		http.Error(w, "Error composing manifest", http.StatusInternalServerError)
-		return
-	}
-
-	// Validate and sanitize the manifest to ensure correct JSON structure
-	// Fix: Check for duplicates and invalid content types in assets
-	for i := range manifest.Assets {
-		// Ensure content type matches file extension for proper display
-		ext := strings.ToLower(manifest.Assets[i].FileExtension)
-		if strings.Contains(ext, ".png") || strings.Contains(ext, ".jpg") || strings.Contains(ext, ".jpeg") ||
-			strings.Contains(ext, ".gif") || strings.Contains(ext, ".svg") {
-			// Image files should have proper image content type
-			if manifest.Assets[i].ContentType == "application/javascript" {
-				switch {
-				case strings.Contains(ext, ".png"):
-					manifest.Assets[i].ContentType = "image/png"
-				case strings.Contains(ext, ".jpg"), strings.Contains(ext, ".jpeg"):
-					manifest.Assets[i].ContentType = "image/jpeg"
-				case strings.Contains(ext, ".gif"):
-					manifest.Assets[i].ContentType = "image/gif"
-				case strings.Contains(ext, ".svg"):
-					manifest.Assets[i].ContentType = "image/svg+xml"
-				}
-				log.Printf("[RequestID: %s] Fixed content type for asset %s to %s",
-					requestID, manifest.Assets[i].Key, manifest.Assets[i].ContentType)
-			}
-		}
-	}
-
-	// Debug log the fixed manifest
-	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
-	log.Printf("[RequestID: %s] DEBUG - Manifest to be sent:\n%s", requestID, string(manifestBytes))
-
-	// Validate JSON again to ensure it's valid
-	var testStruct interface{}
-	if err := json.Unmarshal(manifestBytes, &testStruct); err != nil {
-		log.Printf("[RequestID: %s] ERROR - Invalid JSON in manifest: %v", requestID, err)
-		http.Error(w, "Error creating manifest: invalid JSON structure", http.StatusInternalServerError)
 		return
 	}
 
@@ -389,36 +315,22 @@ func ManifestHandler(c *gin.Context) {
 	if extraParams != "" {
 		log.Printf("[RequestID: %s] DEBUG - Raw Expo-Extra-Params: %s", requestID, extraParams)
 
-		// Try parsing as JSON first
-		var extraParamsMap map[string]string
-		err := json.Unmarshal([]byte(extraParams), &extraParamsMap)
-		if err == nil {
-			// Successfully parsed as JSON
-			log.Printf("[RequestID: %s] DEBUG - Successfully parsed Expo-Extra-Params as JSON", requestID)
-			if bn, ok := extraParamsMap["expo-build-number"]; ok {
-				buildNumber = bn
-				log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params JSON: %s", requestID, buildNumber)
-			}
-		} else {
-			log.Printf("[RequestID: %s] DEBUG - Failed to parse Expo-Extra-Params as JSON: %v", requestID, err)
+		// Parse the extra params format: expo-build-number="build-5"
+		extraParamsParts := strings.Split(extraParams, ",")
+		log.Printf("[RequestID: %s] DEBUG - Split into %d parts:", requestID, len(extraParamsParts))
+		for i, part := range extraParamsParts {
+			part = strings.TrimSpace(part)
+			log.Printf("[RequestID: %s]   Part %d: %s", requestID, i, part)
 
-			// Parse the extra params format: expo-build-number="build-5"
-			extraParamsParts := strings.Split(extraParams, ",")
-			log.Printf("[RequestID: %s] DEBUG - Split into %d parts:", requestID, len(extraParamsParts))
-			for i, part := range extraParamsParts {
-				part = strings.TrimSpace(part)
-				log.Printf("[RequestID: %s]   Part %d: %s", requestID, i, part)
-
-				if strings.Contains(part, "expo-build-number") {
-					// Extract the value between quotes
-					start := strings.Index(part, "\"")
-					end := strings.LastIndex(part, "\"")
-					if start != -1 && end != -1 && end > start {
-						buildNumber = part[start+1 : end]
-						log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, buildNumber)
-					}
-					break
+			if strings.Contains(part, "expo-build-number") {
+				// Extract the value between quotes
+				start := strings.Index(part, "\"")
+				end := strings.LastIndex(part, "\"")
+				if start != -1 && end != -1 && end > start {
+					buildNumber = part[start+1 : end]
+					log.Printf("[RequestID: %s] Found build number in Expo-Extra-Params: %s", requestID, buildNumber)
 				}
+				break
 			}
 		}
 	}
