@@ -23,6 +23,36 @@ func AssetsHandler(c *gin.Context) {
 	log.Printf("[RequestID: %s] Query parameters - asset: %s, runtimeVersion: %s, platform: %s",
 		requestID, assetPath, runtimeVersion, platform)
 
+	// Extract FIREBASE_TOKEN from headers or Expo-Extra-Params
+	firebaseToken := c.GetHeader("FIREBASE_TOKEN")
+
+	// If not found in direct headers, try to extract from Expo-Extra-Params
+	if firebaseToken == "" {
+		extraParams := c.GetHeader("Expo-Extra-Params")
+		if extraParams != "" {
+			log.Printf("[RequestID: %s] Parsing Expo-Extra-Params for FIREBASE_TOKEN", requestID)
+			extraParamsParts := strings.Split(extraParams, ",")
+			for _, part := range extraParamsParts {
+				part = strings.TrimSpace(part)
+				if strings.Contains(part, "FIREBASE_TOKEN") {
+					// Extract the value between quotes
+					start := strings.Index(part, "\"")
+					end := strings.LastIndex(part, "\"")
+					if start != -1 && end != -1 && end > start {
+						firebaseToken = part[start+1 : end]
+						log.Printf("[RequestID: %s] Found FIREBASE_TOKEN in Expo-Extra-Params", requestID)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	if firebaseToken != "" {
+		log.Printf("[RequestID: %s] FIREBASE_TOKEN is present for asset request (length: %d)",
+			requestID, len(firebaseToken))
+	}
+
 	// Check if we're using path parameters instead
 	path := c.Param("path")
 	log.Printf("[RequestID: %s] Path parameter: %s", requestID, path)

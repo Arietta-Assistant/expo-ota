@@ -73,33 +73,80 @@ export function computeFilesRequests(
   projectDir: string,
   requestedPlatform: RequestedPlatform
 ): AssetToUpload[] {
+  // Look for exported files in dist directory
   const distDir = path.join(projectDir, 'dist');
-  const expoDir = path.join(projectDir, '_expo');
+  
+  if (!fs.existsSync(distDir)) {
+    Log.debug(`Dist directory not found at ${distDir}, project may not be exported yet`);
+    throw new Error('Project has not been exported. Run "npx expo export" first or use the publish command.');
+  }
+  
+  // Check for metadata.json in the dist directory
+  const metadataPath = path.join(distDir, 'metadata.json');
+  if (!fs.existsSync(metadataPath)) {
+    Log.debug(`Metadata file not found at ${metadataPath}`);
+    throw new Error('Metadata file not found. Make sure export completed successfully.');
+  }
+  
   const metadata = loadMetadata(distDir);
+  Log.debug(`Loaded metadata: Platform keys: ${Object.keys(metadata.fileMetadata).join(', ')}`);
+  
+  // Initialize assets array with required files
   const assets: AssetToUpload[] = [
     { path: path.join(distDir, 'metadata.json'), name: 'metadata.json', ext: 'json' },
-    { path: path.join(distDir, 'expoConfig.json'), name: 'expoConfig.json', ext: 'json' },
   ];
+  
+  // Add expo config if available
+  const expoConfigPath = path.join(distDir, 'expoConfig.json');
+  if (fs.existsSync(expoConfigPath)) {
+    assets.push({ path: expoConfigPath, name: 'expoConfig.json', ext: 'json' });
+  }
+  
+  // Process each platform
   for (const platform of Object.keys(metadata.fileMetadata) as Platform[]) {
+    // Skip platforms that weren't requested
     if (requestedPlatform !== RequestedPlatform.All && requestedPlatform !== platform) {
+      Log.debug(`Skipping platform ${platform} (requested: ${requestedPlatform})`);
       continue;
     }
-    const bundle = metadata.fileMetadata[platform].bundle;
-    const bundlePath = path.join(expoDir, bundle);
-    if (fs.existsSync(bundlePath)) {
-      assets.push({ path: bundlePath, name: bundle, ext: 'hbc' });
-    } else {
-      assets.push({ path: path.join(distDir, bundle), name: bundle, ext: 'hbc' });
+    
+    const platformMetadata = metadata.fileMetadata[platform];
+    if (!platformMetadata) {
+      Log.debug(`No metadata for platform ${platform}`);
+      continue;
     }
-    for (const asset of metadata.fileMetadata[platform].assets) {
-      const assetPath = path.join(expoDir, asset.path);
-      if (fs.existsSync(assetPath)) {
-        assets.push({ path: assetPath, name: asset.path, ext: asset.ext });
-      } else {
-        assets.push({ path: path.join(distDir, asset.path), name: asset.path, ext: asset.ext });
+    
+    // Add the bundle file
+    const bundle = platformMetadata.bundle;
+    Log.debug(`Adding bundle for ${platform}: ${bundle}`);
+    
+    // Use the dist directory path for the bundle
+    const bundlePath = path.join(distDir, bundle);
+    if (fs.existsSync(bundlePath)) {
+      assets.push({ path: bundlePath, name: bundle, ext: 'js' });
+    } else {
+      Log.warn(`Bundle file not found at ${bundlePath}`);
+    }
+    
+    // Add all platform assets
+    if (platformMetadata.assets && Array.isArray(platformMetadata.assets)) {
+      Log.debug(`Found ${platformMetadata.assets.length} assets for platform ${platform}`);
+      
+      // Add each asset
+      for (const asset of platformMetadata.assets) {
+        const assetPath = path.join(distDir, asset.path);
+        if (fs.existsSync(assetPath)) {
+          assets.push({ path: assetPath, name: asset.path, ext: asset.ext });
+        } else {
+          Log.warn(`Asset file not found at ${assetPath}`);
+        }
       }
+    } else {
+      Log.debug(`No assets found for platform ${platform}`);
     }
   }
+  
+  Log.debug(`Total files to upload: ${assets.length}`);
   return assets;
 }
 

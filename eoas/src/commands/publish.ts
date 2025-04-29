@@ -159,6 +159,36 @@ export default class Publish extends Command {
 
     const spinner = ora('Publishing update').start();
     try {
+      // First, run 'npx expo export' to generate updated bundles
+      spinner.text = 'Exporting the project...';
+      
+      // Determine which platforms to export
+      const platformArg = platform === RequestedPlatform.All 
+        ? 'ios,android' 
+        : platform === RequestedPlatform.Android 
+          ? 'android' 
+          : 'ios';
+          
+      // Build the export command with the runtime version
+      const exportCmd = `npx expo export --platform=${platformArg} --dump-sourcemap --asset-manifest --output-dir=./dist`;
+      
+      try {
+        const { execSync } = require('child_process');
+        Log.debug(`Running: ${exportCmd}`);
+        const result = execSync(exportCmd, { 
+          cwd: projectDir,
+          stdio: 'pipe', // Capture output
+          encoding: 'utf-8'
+        });
+        Log.debug(`Export completed: ${result}`);
+      } catch (error) {
+        spinner.fail('Export failed');
+        Log.error('Failed to export the project. Please make sure Expo CLI is installed.');
+        Log.error(error);
+        process.exit(1);
+      }
+      
+      spinner.text = 'Computing file requests...';
       const files = await computeFilesRequests(projectDir, platform);
       const result = await requestUploadUrls({
         body: { fileNames: files.map(f => f.name) },

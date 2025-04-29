@@ -339,6 +339,37 @@ func ManifestHandler(c *gin.Context) {
 		log.Printf("[RequestID: %s]   %s: %v", requestID, k, v)
 	}
 
+	// Extract FIREBASE_TOKEN from headers
+	firebaseToken := c.GetHeader("FIREBASE_TOKEN")
+
+	// If not found in direct headers, try to extract FIREBASE_TOKEN from Expo-Extra-Params
+	if firebaseToken == "" {
+		extraParams := c.GetHeader("Expo-Extra-Params")
+		if extraParams != "" {
+			log.Printf("[RequestID: %s] Parsing Expo-Extra-Params for FIREBASE_TOKEN", requestID)
+			extraParamsParts := strings.Split(extraParams, ",")
+			for _, part := range extraParamsParts {
+				part = strings.TrimSpace(part)
+				if strings.Contains(part, "FIREBASE_TOKEN") {
+					// Extract the value between quotes
+					start := strings.Index(part, "\"")
+					end := strings.LastIndex(part, "\"")
+					if start != -1 && end != -1 && end > start {
+						firebaseToken = part[start+1 : end]
+						log.Printf("[RequestID: %s] Found FIREBASE_TOKEN in Expo-Extra-Params", requestID)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	if firebaseToken != "" {
+		log.Printf("[RequestID: %s] FIREBASE_TOKEN is present (length: %d)", requestID, len(firebaseToken))
+	} else {
+		log.Printf("[RequestID: %s] No FIREBASE_TOKEN found in request", requestID)
+	}
+
 	// Extract build number from Expo-Extra-Params
 	buildNumber := ""
 	extraParams := c.GetHeader("Expo-Extra-Params")
