@@ -339,24 +339,25 @@ func ManifestHandler(c *gin.Context) {
 		log.Printf("[RequestID: %s]   %s: %v", requestID, k, v)
 	}
 
-	// Extract FIREBASE_TOKEN from headers
-	firebaseToken := c.GetHeader("FIREBASE_TOKEN")
+	// Extract firebase_token from headers
+	firebaseToken := c.GetHeader("firebase_token")
 
-	// If not found in direct headers, try to extract FIREBASE_TOKEN from Expo-Extra-Params
+	// If not found in direct headers, try to extract firebase_token from Expo-Extra-Params
 	if firebaseToken == "" {
 		extraParams := c.GetHeader("Expo-Extra-Params")
 		if extraParams != "" {
-			log.Printf("[RequestID: %s] Parsing Expo-Extra-Params for FIREBASE_TOKEN", requestID)
+			log.Printf("[RequestID: %s] Parsing Expo-Extra-Params for firebase_token", requestID)
 			extraParamsParts := strings.Split(extraParams, ",")
 			for _, part := range extraParamsParts {
 				part = strings.TrimSpace(part)
-				if strings.Contains(part, "FIREBASE_TOKEN") {
+				// Check for both firebase_token and firebase_token formats
+				if strings.Contains(part, "firebase_token") || strings.Contains(part, "firebase_token") {
 					// Extract the value between quotes
 					start := strings.Index(part, "\"")
 					end := strings.LastIndex(part, "\"")
 					if start != -1 && end != -1 && end > start {
 						firebaseToken = part[start+1 : end]
-						log.Printf("[RequestID: %s] Found FIREBASE_TOKEN in Expo-Extra-Params", requestID)
+						log.Printf("[RequestID: %s] Found firebase token in Expo-Extra-Params", requestID)
 					}
 					break
 				}
@@ -365,9 +366,9 @@ func ManifestHandler(c *gin.Context) {
 	}
 
 	if firebaseToken != "" {
-		log.Printf("[RequestID: %s] FIREBASE_TOKEN is present (length: %d)", requestID, len(firebaseToken))
+		log.Printf("[RequestID: %s] Firebase token is present (length: %d)", requestID, len(firebaseToken))
 	} else {
-		log.Printf("[RequestID: %s] No FIREBASE_TOKEN found in request", requestID)
+		log.Printf("[RequestID: %s] No firebase token found in request", requestID)
 	}
 
 	// Extract build number from Expo-Extra-Params

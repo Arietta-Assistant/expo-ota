@@ -5,6 +5,7 @@ import https from 'https';
 import mime from 'mime';
 import url from 'url';
 import path from 'path';
+import spawnAsync from '@expo/spawn-async';
 
 import { computeFilesRequests, requestUploadUrls } from '../lib/assets';
 import {
@@ -158,94 +159,197 @@ export default class Publish extends Command {
       process.exit(1);
     }
 
-    const spinner = ora('Publishing update').start();
+    const runtimeSpinner = ora('🔄 Resolving runtime version...').start();
+    const runtimeVersions = [
+      ...(!platform || platform === RequestedPlatform.All || platform === RequestedPlatform.Ios
+        ? [
+            {
+              runtimeVersion: (
+                await resolveRuntimeVersionAsync({
+                  exp: privateConfig,
+                  platform: 'ios',
+                  workflow: await resolveWorkflowAsync(projectDir, Platform.IOS, vcsClient),
+                  projectDir,
+                  env: process.env as Env,
+                })
+              )?.runtimeVersion,
+              platform: 'ios',
+            },
+          ]
+        : []),
+      ...(!platform || platform === RequestedPlatform.All || platform === RequestedPlatform.Android
+        ? [
+            {
+              runtimeVersion: (
+                await resolveRuntimeVersionAsync({
+                  exp: privateConfig,
+                  platform: 'android',
+                  workflow: await resolveWorkflowAsync(projectDir, Platform.ANDROID, vcsClient),
+                  projectDir,
+                  env: process.env as Env,
+                })
+              )?.runtimeVersion,
+              platform: 'android',
+            },
+          ]
+        : []),
+    ].filter(({ runtimeVersion }) => !!runtimeVersion);
+    if (!runtimeVersions.length) {
+      runtimeSpinner.fail('Could not resolve runtime versions for the requested platforms');
+      Log.error('Could not resolve runtime versions for the requested platforms');
+      process.exit(1);
+    }
+    runtimeSpinner.succeed('✅ Runtime versions resolved');
+
+    // 1. Clean up the dist directory
+    const cleaningSpinner = ora(`🗑️ Cleaning up output directory...`).start();
     try {
-      // First, clean up the dist directory
-      spinner.text = 'Cleaning output directory...';
-      try {
-        await fs.remove(path.join(projectDir, 'dist'));
-        Log.debug('Cleaned output directory');
-      } catch (error) {
-        Log.warn('Error cleaning output directory:', error);
+      await spawnAsync('rm', ['-rf', 'dist'], { cwd: projectDir });
+      cleaningSpinner.succeed('✅ Cleanup completed');
+    } catch (e) {
+      cleaningSpinner.fail('❌ Failed to clean up the output directory');
+      Log.error(e);
+      process.exit(1);
+    }
+
+    // 2. Export the project
+    const exportSpinner = ora('📦 Exporting project files...').start();
+    try {
+      // Determine platforms for export
+      let platformArgs: string[] = [];
+      if (platform === RequestedPlatform.All) {
+        platformArgs = ['--platform', 'ios', '--platform', 'android'];
+      } else if (platform === RequestedPlatform.Android) {
+        platformArgs = ['--platform', 'android'];
+      } else {
+        platformArgs = ['--platform', 'ios'];
       }
       
-      // Export the project with proper options
-      spinner.text = 'Exporting the project...';
+      const exportCmd = [
+        'expo', 
+        'export', 
+        ...platformArgs,
+        '--dump-sourcemap',
+        '--dump-assetmap',
+        '--output-dir',
+        './dist'
+      ];
       
-      // Determine which platforms to export
-      const platformArg = platform === RequestedPlatform.All 
-        ? 'ios,android' 
-        : platform === RequestedPlatform.Android 
-          ? 'android' 
-          : 'ios';
-          
-      // Export with all necessary flags
-      const exportCmd = `npx expo export --platform=${platformArg} --dump-sourcemap --dump-assetmap --asset-manifest --output-dir=./dist`;
+      Log.debug(`Running: npx ${exportCmd.join(' ')}`);
       
       try {
-        const { execSync } = require('child_process');
-        Log.debug(`Running: ${exportCmd}`);
-        const result = execSync(exportCmd, { 
+        const { stdout } = await spawnAsync('npx', exportCmd, {
           cwd: projectDir,
-          stdio: 'pipe', // Capture output
-          encoding: 'utf-8',
           env: {
             ...process.env,
-            EXPO_NO_DOTENV: '1', // Ensure consistent behavior
+            EXPO_NO_DOTENV: '1',
           }
         });
-        Log.debug(`Export completed: ${result}`);
+        exportSpinner.succeed('🚀 Project exported successfully');
+        Log.debug(stdout);
+      } catch (error: any) {
+        // Capture more detailed error information
+        exportSpinner.fail(`❌ Export failed`);
         
-        // Verify metadata.json exists
-        const metadataPath = path.join(projectDir, 'dist', 'metadata.json');
-        if (!fs.existsSync(metadataPath)) {
-          spinner.fail('Export failed to generate metadata.json');
-          Log.error('The export command did not generate the required metadata.json file');
-          process.exit(1);
+        if (error.stdout) {
+          Log.error(`Export stdout: ${error.stdout}`);
         }
         
-        // Get public config and create expoConfig.json from it
-        spinner.text = 'Creating expoConfig.json...';
+        if (error.stderr) {
+          Log.error(`Export stderr: ${error.stderr}`);
+        }
         
-        // Write expoConfig.json from privateConfig
-        await fs.writeJson(
-          path.join(projectDir, 'dist', 'expoConfig.json'), 
-          {
-            name: privateConfig.name || 'app',
-            slug: privateConfig.slug || 'app',
-            version: privateConfig.version || '1.0.0',
-            sdkVersion: privateConfig.sdkVersion,
-            runtimeVersion: runtimeVersionResult.runtimeVersion,
-            orientation: privateConfig.orientation,
-            icon: privateConfig.icon,
-            userInterfaceStyle: privateConfig.userInterfaceStyle,
-            splash: privateConfig.splash,
-            updates: privateConfig.updates,
-            assetBundlePatterns: privateConfig.assetBundlePatterns,
-            ios: privateConfig.ios,
-            android: privateConfig.android,
-            extra: privateConfig.extra || {},
-          },
-          { spaces: 2 }
-        );
-        Log.debug('Created expoConfig.json');
-      } catch (error) {
-        spinner.fail('Export failed');
-        Log.error('Failed to export the project.');
-        Log.error(error);
+        // Try running a more basic export as a fallback
+        exportSpinner.text = '🔄 Trying fallback export method...';
+        
+        try {
+          Log.debug('Attempting fallback export...');
+          
+          // Basic fallback with minimal options
+          let fallbackPlatformArgs: string[] = [];
+          if (platform === RequestedPlatform.All) {
+            fallbackPlatformArgs = ['--platform', 'ios', '--platform', 'android'];
+          } else if (platform === RequestedPlatform.Android) {
+            fallbackPlatformArgs = ['--platform', 'android'];
+          } else {
+            fallbackPlatformArgs = ['--platform', 'ios'];
+          }
+          
+          const fallbackCmd = [
+            'expo',
+            'export',
+            ...fallbackPlatformArgs,
+            '--output-dir',
+            './dist'
+          ];
+          
+          Log.debug(`Running fallback: npx ${fallbackCmd.join(' ')}`);
+          
+          const { stdout } = await spawnAsync('npx', fallbackCmd, {
+            cwd: projectDir,
+            env: {
+              ...process.env,
+              EXPO_NO_DOTENV: '1',
+            }
+          });
+          exportSpinner.succeed('🚀 Project exported with fallback method');
+          Log.debug(stdout);
+        } catch (fallbackError: any) {
+          exportSpinner.fail(`❌ Fallback export also failed`);
+          if (fallbackError.stdout) {
+            Log.error(`Fallback stdout: ${fallbackError.stdout}`);
+          }
+          if (fallbackError.stderr) {
+            Log.error(`Fallback stderr: ${fallbackError.stderr}`);
+          }
+          Log.error(`Failed to export the project: ${error}`);
+          process.exit(1);
+        }
+      }
+    } catch (e) {
+      exportSpinner.fail(`❌ Failed to export the project: ${e}`);
+      process.exit(1);
+    }
+
+    // 3. Create expoConfig.json
+    const publicConfig = await getPrivateExpoConfigAsync(projectDir);
+    if (!publicConfig) {
+      Log.error('Could not find Expo config in this project');
+      process.exit(1);
+    }
+    
+    fs.writeJsonSync(path.join(projectDir, 'dist', 'expoConfig.json'), publicConfig, {
+      spaces: 2,
+    });
+    Log.debug('expoConfig.json file created in dist directory');
+
+    // 4. Compute file requests and upload
+    const uploadFilesSpinner = ora('📤 Uploading files...').start();
+    
+    let files;
+    try {
+      files = await computeFilesRequests(projectDir, platform);
+      if (!files || files.length === 0) {
+        uploadFilesSpinner.fail('No files to upload');
         process.exit(1);
       }
-      
-      spinner.text = 'Computing file requests...';
-      const files = await computeFilesRequests(projectDir, platform);
+      Log.debug(`Found ${files.length} files to upload`);
+    } catch (error) {
+      uploadFilesSpinner.fail('Failed to compute file requests');
+      Log.error(`Error computing file requests: ${error}`);
+      process.exit(1);
+    }
+    
+    try {
       const result = await requestUploadUrls({
         body: { fileNames: files.map(f => f.name) },
         requestUploadUrl: `${baseUrl}/api/update/request-upload-urls/${branch}`,
-        runtimeVersion: runtimeVersionResult.runtimeVersion,
-        platform: platform === RequestedPlatform.All ? 'all' : platform.toString().toLowerCase(),
+        runtimeVersion: runtimeVersions[0].runtimeVersion || '',
+        platform: runtimeVersions[0].platform,
         commitHash,
         buildNumber: _buildNumber || appBuildNumber,
       });
+
       const { uploadRequests } = result;
 
       for (const file of files) {
@@ -259,7 +363,7 @@ export default class Publish extends Command {
         const contentType = mime.getType(file.path) || 'application/octet-stream';
         
         // Log information about file being uploaded
-        spinner.text = `Uploading ${file.name} (${fileContent.length} bytes)`;
+        uploadFilesSpinner.text = `Uploading ${file.name} (${fileContent.length} bytes)`;
         
         try {
           // Use the raw https module for better control over the request
@@ -304,9 +408,9 @@ export default class Publish extends Command {
         }
       }
 
-      spinner.succeed('Update published successfully');
+      uploadFilesSpinner.succeed('Update published successfully');
     } catch (error) {
-      spinner.fail('Failed to publish update');
+      uploadFilesSpinner.fail('Failed to publish update');
       Log.error(error);
       process.exit(1);
     }
