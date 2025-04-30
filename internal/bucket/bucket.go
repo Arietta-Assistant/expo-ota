@@ -36,6 +36,7 @@ type Bucket interface {
 	DeleteUpdateFolder(branch string, runtimeVersion string, updateId string) error
 	RequestUploadUrlsForFileUpdates(branch string, runtimeVersion string, updateId string, fileNames []string) ([]types.FileUpdateRequest, error)
 	ListUpdates(branch string, runtimeVersion string) ([]string, error)
+	DeleteFile(branch string, runtimeVersion string, updateId string, fileName string) error
 
 	// New methods for user tracking and update activation/deactivation
 	StoreUpdateDownload(download types.UpdateDownload) error

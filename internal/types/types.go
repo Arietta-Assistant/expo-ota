@@ -85,6 +85,7 @@ type Update struct {
 	CommitHash     string        `json:"commitHash,omitempty"`
 	BuildNumber    string        `json:"buildNumber,omitempty"`
 	Platform       string        `json:"platform,omitempty"`
+	Active         bool          `json:"active"`
 }
 
 type BucketFile struct {
@@ -100,4 +101,15 @@ type ExpoAuth struct {
 type FileUpdateRequest struct {
 	Url  string `json:"url"`
 	Path string `json:"path"`
+}
+
+// UpdateDownload represents a record of a user downloading an update
+type UpdateDownload struct {
+	UpdateId       string `json:"updateId"`
+	UserId         string `json:"userId"`
+	DeviceId       string `json:"deviceId"`
+	Platform       string `json:"platform"`
+	DownloadedAt   string `json:"downloadedAt"`
+	RuntimeVersion string `json:"runtimeVersion"`
+	Branch         string `json:"branch"`
 }

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -421,4 +422,173 @@ func (b *LocalBucket) ListUpdates(branch string, runtimeVersion string) ([]strin
 	}
 
 	return updates, nil
+}
+
+func (lb *LocalBucket) DeleteFile(branch string, runtimeVersion string, updateId string, fileName string) error {
+	// Construct the full path to the file
+	filePath := fmt.Sprintf("%s/%s/%s/%s/%s", lb.BasePath, branch, runtimeVersion, updateId, fileName)
+
+	// Check if file exists and remove it
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		// File doesn't exist, not an error for deletion
+		return nil
+	}
+
+	// Delete the file
+	return os.Remove(filePath)
+}
+
+func (lb *LocalBucket) StoreUpdateDownload(download types.UpdateDownload) error {
+	// Create downloads directory if it doesn't exist
+	downloadsDir := fmt.Sprintf("%s/downloads/%s/%s/%s",
+		lb.BasePath, download.Branch, download.RuntimeVersion, download.UpdateId)
+	os.MkdirAll(downloadsDir, 0755)
+
+	// Create a download record with timestamp in filename
+	downloadFileName := fmt.Sprintf("%s/%s_%s.json",
+		downloadsDir, download.UserId, download.DownloadedAt)
+
+	// Convert download record to JSON
+	downloadData, err := json.Marshal(download)
+	if err != nil {
+		return fmt.Errorf("error marshaling download record: %w", err)
+	}
+
+	// Write to file
+	err = os.WriteFile(downloadFileName, downloadData, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing download record: %w", err)
+	}
+
+	return nil
+}
+
+func (lb *LocalBucket) GetUpdateDownloads(branch string, runtimeVersion string, updateId string) ([]types.UpdateDownload, error) {
+	// Path to downloads directory
+	downloadsDir := fmt.Sprintf("%s/downloads/%s/%s/%s",
+		lb.BasePath, branch, runtimeVersion, updateId)
+
+	// Check if directory exists
+	if _, err := os.Stat(downloadsDir); os.IsNotExist(err) {
+		// No downloads yet, return empty list
+		return []types.UpdateDownload{}, nil
+	}
+
+	// Read all download files
+	files, err := os.ReadDir(downloadsDir)
+	if err != nil {
+		return nil, fmt.Errorf("error reading downloads directory: %w", err)
+	}
+
+	downloads := make([]types.UpdateDownload, 0, len(files))
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		// Read download record
+		downloadData, err := os.ReadFile(fmt.Sprintf("%s/%s", downloadsDir, file.Name()))
+		if err != nil {
+			log.Printf("Error reading download record %s: %v", file.Name(), err)
+			continue
+		}
+
+		// Parse JSON
+		var download types.UpdateDownload
+		if err := json.Unmarshal(downloadData, &download); err != nil {
+			log.Printf("Error parsing download record %s: %v", file.Name(), err)
+			continue
+		}
+
+		downloads = append(downloads, download)
+	}
+
+	return downloads, nil
+}
+
+func (lb *LocalBucket) ActivateUpdate(branch string, runtimeVersion string, updateId string) error {
+	// Get update to ensure it exists
+	update, err := lb.GetUpdate(branch, runtimeVersion, updateId)
+	if err != nil {
+		return fmt.Errorf("error getting update: %w", err)
+	}
+
+	// Set active flag
+	update.Active = true
+
+	// Create active marker file
+	activeFilePath := fmt.Sprintf("%s/%s/%s/%s/.active",
+		lb.BasePath, branch, runtimeVersion, updateId)
+
+	if err := os.WriteFile(activeFilePath, []byte("active"), 0644); err != nil {
+		return fmt.Errorf("error creating active marker: %w", err)
+	}
+
+	// Remove inactive marker if it exists
+	inactiveFilePath := fmt.Sprintf("%s/%s/%s/%s/.inactive",
+		lb.BasePath, branch, runtimeVersion, updateId)
+	os.Remove(inactiveFilePath)
+
+	return nil
+}
+
+func (lb *LocalBucket) DeactivateUpdate(branch string, runtimeVersion string, updateId string) error {
+	// Get update to ensure it exists
+	update, err := lb.GetUpdate(branch, runtimeVersion, updateId)
+	if err != nil {
+		return fmt.Errorf("error getting update: %w", err)
+	}
+
+	// Set active flag
+	update.Active = false
+
+	// Create inactive marker file
+	inactiveFilePath := fmt.Sprintf("%s/%s/%s/%s/.inactive",
+		lb.BasePath, branch, runtimeVersion, updateId)
+
+	if err := os.WriteFile(inactiveFilePath, []byte("inactive"), 0644); err != nil {
+		return fmt.Errorf("error creating inactive marker: %w", err)
+	}
+
+	// Remove active marker if it exists
+	activeFilePath := fmt.Sprintf("%s/%s/%s/%s/.active",
+		lb.BasePath, branch, runtimeVersion, updateId)
+	os.Remove(activeFilePath)
+
+	return nil
+}
+
+func (lb *LocalBucket) GetActiveUpdates(branch string, runtimeVersion string) ([]types.Update, error) {
+	// Get all updates for the branch and version
+	updates, err := lb.GetUpdates(branch, runtimeVersion)
+	if err != nil {
+		return nil, fmt.Errorf("error getting updates: %w", err)
+	}
+
+	// Filter for active updates
+	activeUpdates := make([]types.Update, 0, len(updates))
+
+	for _, update := range updates {
+		// Check for active marker or absence of inactive marker
+		activeFilePath := fmt.Sprintf("%s/%s/%s/%s/.active",
+			lb.BasePath, branch, runtimeVersion, update.UpdateId)
+		inactiveFilePath := fmt.Sprintf("%s/%s/%s/%s/.inactive",
+			lb.BasePath, branch, runtimeVersion, update.UpdateId)
+
+		if _, err := os.Stat(activeFilePath); err == nil {
+			// Active marker exists
+			update.Active = true
+			activeUpdates = append(activeUpdates, update)
+		} else if _, err := os.Stat(inactiveFilePath); os.IsNotExist(err) {
+			// Inactive marker doesn't exist, consider active by default
+			update.Active = true
+			activeUpdates = append(activeUpdates, update)
+		} else {
+			// Inactive marker exists
+			update.Active = false
+		}
+	}
+
+	return activeUpdates, nil
 }

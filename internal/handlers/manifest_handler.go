@@ -488,8 +488,8 @@ func ManifestHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[RequestID: %s] Found latest update: ID=%s, Active=%v",
-		requestID, latestUpdate.UpdateId, latestUpdate.Active)
+	log.Printf("[RequestID: %s] Found latest update: ID=%s",
+		requestID, latestUpdate.UpdateId)
 
 	// If a firebase token is present, track this user and device
 	if firebaseToken != "" && latestUpdate != nil {

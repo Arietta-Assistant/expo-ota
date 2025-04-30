@@ -960,3 +960,198 @@ func (b *FirebaseBucket) ListUpdates(branch string, runtimeVersion string) ([]st
 
 	return updates, nil
 }
+
+func (fb *FirebaseBucket) DeleteFile(branch string, runtimeVersion string, updateId string, fileName string) error {
+	ctx := context.Background()
+	filePath := fmt.Sprintf("%s/%s/%s/%s", branch, runtimeVersion, updateId, fileName)
+
+	// Delete the file from Firebase Storage
+	err := fb.bucket.Object(filePath).Delete(ctx)
+	if err != nil {
+		// If the file doesn't exist, consider it a success
+		if err == storage.ErrObjectNotExist {
+			return nil
+		}
+		return fmt.Errorf("error deleting file from Firebase: %w", err)
+	}
+
+	return nil
+}
+
+func (fb *FirebaseBucket) StoreUpdateDownload(download types.UpdateDownload) error {
+	ctx := context.Background()
+
+	// Create a path for the download record
+	downloadPath := fmt.Sprintf("downloads/%s/%s/%s/%s_%s.json",
+		download.Branch, download.RuntimeVersion, download.UpdateId,
+		download.UserId, download.DownloadedAt)
+
+	// Convert download record to JSON
+	downloadData, err := json.Marshal(download)
+	if err != nil {
+		return fmt.Errorf("error marshaling download record: %w", err)
+	}
+
+	// Upload to Firebase Storage
+	writer := fb.bucket.Object(downloadPath).NewWriter(ctx)
+	writer.ContentType = "application/json"
+
+	if _, err := writer.Write(downloadData); err != nil {
+		writer.Close()
+		return fmt.Errorf("error writing download record to Firebase: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("error closing Firebase writer: %w", err)
+	}
+
+	return nil
+}
+
+func (fb *FirebaseBucket) GetUpdateDownloads(branch string, runtimeVersion string, updateId string) ([]types.UpdateDownload, error) {
+	ctx := context.Background()
+
+	// Create a prefix for listing download records
+	prefix := fmt.Sprintf("downloads/%s/%s/%s/", branch, runtimeVersion, updateId)
+
+	// List objects with the prefix
+	it := fb.bucket.Objects(ctx, &storage.Query{
+		Prefix: prefix,
+	})
+
+	var downloads []types.UpdateDownload
+
+	// Process each download record
+	for {
+		objAttrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error listing download records: %w", err)
+		}
+
+		if !strings.HasSuffix(objAttrs.Name, ".json") {
+			continue
+		}
+
+		// Get the download record
+		reader, err := fb.bucket.Object(objAttrs.Name).NewReader(ctx)
+		if err != nil {
+			log.Printf("Error getting download record %s: %v", objAttrs.Name, err)
+			continue
+		}
+
+		// Read the data
+		downloadData, err := io.ReadAll(reader)
+		reader.Close()
+
+		if err != nil {
+			log.Printf("Error reading download record %s: %v", objAttrs.Name, err)
+			continue
+		}
+
+		// Parse JSON
+		var download types.UpdateDownload
+		if err := json.Unmarshal(downloadData, &download); err != nil {
+			log.Printf("Error parsing download record %s: %v", objAttrs.Name, err)
+			continue
+		}
+
+		downloads = append(downloads, download)
+	}
+
+	return downloads, nil
+}
+
+func (fb *FirebaseBucket) ActivateUpdate(branch string, runtimeVersion string, updateId string) error {
+	ctx := context.Background()
+
+	// Create a marker object for active status
+	activePath := fmt.Sprintf("%s/%s/%s/.active", branch, runtimeVersion, updateId)
+
+	writer := fb.bucket.Object(activePath).NewWriter(ctx)
+	writer.ContentType = "text/plain"
+
+	if _, err := writer.Write([]byte("active")); err != nil {
+		writer.Close()
+		return fmt.Errorf("error creating active marker: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("error closing Firebase writer: %w", err)
+	}
+
+	// Delete inactive marker if it exists
+	inactivePath := fmt.Sprintf("%s/%s/%s/.inactive", branch, runtimeVersion, updateId)
+	fb.bucket.Object(inactivePath).Delete(ctx)
+
+	return nil
+}
+
+func (fb *FirebaseBucket) DeactivateUpdate(branch string, runtimeVersion string, updateId string) error {
+	ctx := context.Background()
+
+	// Create a marker object for inactive status
+	inactivePath := fmt.Sprintf("%s/%s/%s/.inactive", branch, runtimeVersion, updateId)
+
+	writer := fb.bucket.Object(inactivePath).NewWriter(ctx)
+	writer.ContentType = "text/plain"
+
+	if _, err := writer.Write([]byte("inactive")); err != nil {
+		writer.Close()
+		return fmt.Errorf("error creating inactive marker: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("error closing Firebase writer: %w", err)
+	}
+
+	// Delete active marker if it exists
+	activePath := fmt.Sprintf("%s/%s/%s/.active", branch, runtimeVersion, updateId)
+	fb.bucket.Object(activePath).Delete(ctx)
+
+	return nil
+}
+
+func (fb *FirebaseBucket) GetActiveUpdates(branch string, runtimeVersion string) ([]types.Update, error) {
+	// Get all updates for the branch and version
+	updates, err := fb.GetUpdates(branch, runtimeVersion)
+	if err != nil {
+		return nil, fmt.Errorf("error getting updates: %w", err)
+	}
+
+	ctx := context.Background()
+	activeUpdates := make([]types.Update, 0, len(updates))
+
+	// Check each update for active status
+	for _, update := range updates {
+		// Check for active marker
+		activePath := fmt.Sprintf("%s/%s/%s/.active", branch, runtimeVersion, update.UpdateId)
+		activeObj := fb.bucket.Object(activePath)
+
+		_, err := activeObj.Attrs(ctx)
+		if err == nil {
+			// Active marker exists
+			update.Active = true
+			activeUpdates = append(activeUpdates, update)
+			continue
+		}
+
+		// Check for inactive marker
+		inactivePath := fmt.Sprintf("%s/%s/%s/.inactive", branch, runtimeVersion, update.UpdateId)
+		inactiveObj := fb.bucket.Object(inactivePath)
+
+		_, err = inactiveObj.Attrs(ctx)
+		if err != nil {
+			// No inactive marker, consider active by default
+			update.Active = true
+			activeUpdates = append(activeUpdates, update)
+		} else {
+			// Inactive marker exists
+			update.Active = false
+		}
+	}
+
+	return activeUpdates, nil
+}

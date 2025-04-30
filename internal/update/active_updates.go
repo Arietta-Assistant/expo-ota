@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strings"
 )
 
 // GetLatestActiveUpdateForRuntimeVersion prioritizes updates marked as active
@@ -32,10 +31,12 @@ func GetLatestActiveUpdateForRuntimeVersion(branch string, runtimeVersion string
 
 		// Check if this update is marked as active
 		// By default, updates are considered active if not explicitly marked inactive
-		if update.Active || update.Active == false && !hasStateFile(update, "inactive") {
+		if hasStateFile(update, "active") || !hasStateFile(update, "inactive") {
+			update.Active = true
 			activeUpdates = append(activeUpdates, update)
 			log.Printf("Update %s is active", update.UpdateId)
 		} else {
+			update.Active = false
 			inactiveUpdates = append(inactiveUpdates, update)
 			log.Printf("Update %s is inactive, skipping", update.UpdateId)
 		}
@@ -99,24 +100,12 @@ func hasStateFile(update types.Update, stateFileName string) bool {
 
 // ActivateUpdate marks an update as active
 func ActivateUpdate(branch string, runtimeVersion string, updateId string) error {
-	// Get the update
-	update := types.Update{
-		Branch:         branch,
-		RuntimeVersion: runtimeVersion,
-		UpdateId:       updateId,
-		Active:         true,
-	}
-
-	// Add active state file
+	// Use the bucket's implementation directly
 	resolvedBucket := bucket.GetBucket()
-	reader := strings.NewReader("active")
-	err := resolvedBucket.UploadFileIntoUpdate(update, ".active", reader)
+	err := resolvedBucket.ActivateUpdate(branch, runtimeVersion, updateId)
 	if err != nil {
-		return fmt.Errorf("error marking update as active: %w", err)
+		return fmt.Errorf("error activating update: %w", err)
 	}
-
-	// Remove inactive state file if it exists
-	_ = resolvedBucket.DeleteFile(branch, runtimeVersion, updateId, ".inactive")
 
 	// Invalidate cache
 	invalidateUpdateCache(branch, runtimeVersion)
@@ -128,24 +117,12 @@ func ActivateUpdate(branch string, runtimeVersion string, updateId string) error
 
 // DeactivateUpdate marks an update as inactive
 func DeactivateUpdate(branch string, runtimeVersion string, updateId string) error {
-	// Get the update
-	update := types.Update{
-		Branch:         branch,
-		RuntimeVersion: runtimeVersion,
-		UpdateId:       updateId,
-		Active:         false,
-	}
-
-	// Add inactive state file
+	// Use the bucket's implementation directly
 	resolvedBucket := bucket.GetBucket()
-	reader := strings.NewReader("inactive")
-	err := resolvedBucket.UploadFileIntoUpdate(update, ".inactive", reader)
+	err := resolvedBucket.DeactivateUpdate(branch, runtimeVersion, updateId)
 	if err != nil {
-		return fmt.Errorf("error marking update as inactive: %w", err)
+		return fmt.Errorf("error deactivating update: %w", err)
 	}
-
-	// Remove active state file if it exists
-	_ = resolvedBucket.DeleteFile(branch, runtimeVersion, updateId, ".active")
 
 	// Invalidate cache
 	invalidateUpdateCache(branch, runtimeVersion)
