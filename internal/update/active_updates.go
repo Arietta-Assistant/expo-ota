@@ -90,11 +90,21 @@ func GetLatestActiveUpdateForRuntimeVersion(branch string, runtimeVersion string
 // hasStateFile checks if an update has a specific state file like "inactive" or "active"
 func hasStateFile(update types.Update, stateFileName string) bool {
 	resolvedBucket := bucket.GetBucket()
+
+	// Try with dot prefix first
 	file, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, "."+stateFileName)
 	if err == nil && file != nil {
 		file.Close()
 		return true
 	}
+
+	// Also try without dot prefix for compatibility
+	file, err = resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, stateFileName)
+	if err == nil && file != nil {
+		file.Close()
+		return true
+	}
+
 	return false
 }
 
