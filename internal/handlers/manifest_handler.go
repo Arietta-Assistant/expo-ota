@@ -216,39 +216,25 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 	manifestJSON, _ := json.MarshalIndent(manifest, "", "  ")
 	log.Printf("[RequestID: %s] Sending manifest to client: %s", requestID, string(manifestJSON))
 
-	// Final check - ONLY block updates that have explicit inactive markers
-
-	// Get bucket for file access
+	// ULTRA SIMPLE CHECK: Only check for inactive markers in a few common locations
+	// If no inactive marker is found, update is ACTIVE
 	resolvedBucket := bucket.GetBucket()
+	inactiveFiles := []string{".inactive", "inactive", "assets/inactive"}
 
-	// Only check for inactive markers, if none are found, the update is active
-	inactiveMarkers := []string{".inactive", "inactive", "assets/inactive"}
-
-	log.Printf("[RequestID: %s] SIMPLIFIED CHECK: Only checking for inactive markers for update %s",
-		requestID, lastUpdate.UpdateId)
-
-	isInactive := false
-	for _, marker := range inactiveMarkers {
-		markerFile, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, marker)
-		if err == nil && markerFile != nil {
-			markerFile.Close()
-			log.Printf("[RequestID: %s] FOUND INACTIVE MARKER at %s/%s/%s/%s - update is inactive",
-				requestID, lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, marker)
-			isInactive = true
-			break
+	// Check for any inactive marker
+	for _, marker := range inactiveFiles {
+		file, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, marker)
+		if err == nil && file != nil {
+			file.Close()
+			log.Printf("[RequestID: %s] INACTIVE: Found marker %s for %s - NOT delivering update",
+				requestID, marker, lastUpdate.UpdateId)
+			putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
+			return
 		}
 	}
 
-	// If and ONLY if an inactive marker was found, don't deliver the update
-	if isInactive {
-		log.Printf("[RequestID: %s] Update %s has an inactive marker, not delivering to client",
-			requestID, lastUpdate.UpdateId)
-		putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
-		return
-	}
-
-	// No inactive markers found - update is active by default
-	log.Printf("[RequestID: %s] ACTIVE BY DEFAULT: No inactive markers found for update %s, delivering to client",
+	// No inactive marker found - update is active, proceed with delivery
+	log.Printf("[RequestID: %s] ACTIVE: No inactive marker found for %s - delivering update",
 		requestID, lastUpdate.UpdateId)
 
 	putResponse(w, r, manifest, "manifest", lastUpdate.RuntimeVersion, protocolVersion, requestID)
