@@ -136,10 +136,6 @@ func GetUpdates(branch, runtimeVersion string) ([]types.Update, error) {
 		if buildNum > 0 {
 			updates[i].BuildNumber = strconv.Itoa(buildNum)
 		}
-
-		// Let the bucket implementation determine the active state
-		// The default is active unless explicitly marked inactive
-		updates[i].Active = true
 	}
 
 	// Sort updates by creation time (newest first)

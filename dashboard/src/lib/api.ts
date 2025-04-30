@@ -101,37 +101,8 @@ export class ApiClient {
         updateId: string;
         platform: string;
         commitHash: string;
-        active?: boolean;
-        downloadCount?: number;
       }[]
     >(`/api/updates/${branch}/${runtimeVersion}`, {
-      method: 'GET',
-    });
-  }
-  public async deleteUpdate(branch: string, runtimeVersion: string, updateId: string) {
-    return this.request<{ success: boolean }>(`/api/updates/${branch}/${runtimeVersion}/${updateId}`, {
-      method: 'DELETE',
-    });
-  }
-  public async activateUpdate(branch: string, runtimeVersion: string, updateId: string) {
-    return this.request<{ success: boolean }>(`/api/updates/${branch}/${runtimeVersion}/${updateId}/activate`, {
-      method: 'POST',
-    });
-  }
-  public async deactivateUpdate(branch: string, runtimeVersion: string, updateId: string) {
-    return this.request<{ success: boolean }>(`/api/updates/${branch}/${runtimeVersion}/${updateId}/deactivate`, {
-      method: 'POST',
-    });
-  }
-  public async getUpdateStats(branch: string, runtimeVersion: string, updateId: string) {
-    return this.request<{
-      downloadCount: number;
-      users: Array<{
-        userId: string;
-        deviceId: string;
-        lastDownloadedAt: string;
-      }>;
-    }>(`/api/updates/${branch}/${runtimeVersion}/${updateId}/stats`, {
       method: 'GET',
     });
   }

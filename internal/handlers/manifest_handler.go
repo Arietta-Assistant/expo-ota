@@ -216,27 +216,6 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 	manifestJSON, _ := json.MarshalIndent(manifest, "", "  ")
 	log.Printf("[RequestID: %s] Sending manifest to client: %s", requestID, string(manifestJSON))
 
-	// ULTRA SIMPLE CHECK: Only check for inactive markers in a few common locations
-	// If no inactive marker is found, update is ACTIVE
-	resolvedBucket := bucket.GetBucket()
-	inactiveFiles := []string{".inactive", "inactive", "assets/inactive"}
-
-	// Check for any inactive marker
-	for _, marker := range inactiveFiles {
-		file, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, marker)
-		if err == nil && file != nil {
-			file.Close()
-			log.Printf("[RequestID: %s] INACTIVE: Found marker %s for %s - NOT delivering update",
-				requestID, marker, lastUpdate.UpdateId)
-			putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
-			return
-		}
-	}
-
-	// No inactive marker found - update is active, proceed with delivery
-	log.Printf("[RequestID: %s] ACTIVE: No inactive marker found for %s - delivering update",
-		requestID, lastUpdate.UpdateId)
-
 	putResponse(w, r, manifest, "manifest", lastUpdate.RuntimeVersion, protocolVersion, requestID)
 }
 
@@ -360,6 +339,38 @@ func ManifestHandler(c *gin.Context) {
 		log.Printf("[RequestID: %s]   %s: %v", requestID, k, v)
 	}
 
+	// Extract firebase_token from headers
+	firebaseToken := c.GetHeader("firebase_token")
+
+	// If not found in direct headers, try to extract firebase_token from Expo-Extra-Params
+	if firebaseToken == "" {
+		extraParams := c.GetHeader("Expo-Extra-Params")
+		if extraParams != "" {
+			log.Printf("[RequestID: %s] Parsing Expo-Extra-Params for firebase_token", requestID)
+			extraParamsParts := strings.Split(extraParams, ",")
+			for _, part := range extraParamsParts {
+				part = strings.TrimSpace(part)
+				// Check for both firebase_token and firebase_token formats
+				if strings.Contains(part, "firebase_token") || strings.Contains(part, "firebase_token") {
+					// Extract the value between quotes
+					start := strings.Index(part, "\"")
+					end := strings.LastIndex(part, "\"")
+					if start != -1 && end != -1 && end > start {
+						firebaseToken = part[start+1 : end]
+						log.Printf("[RequestID: %s] Found firebase token in Expo-Extra-Params", requestID)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	if firebaseToken != "" {
+		log.Printf("[RequestID: %s] Firebase token is present (length: %d)", requestID, len(firebaseToken))
+	} else {
+		log.Printf("[RequestID: %s] No firebase token found in request", requestID)
+	}
+
 	// Extract build number from Expo-Extra-Params
 	buildNumber := ""
 	extraParams := c.GetHeader("Expo-Extra-Params")
@@ -446,31 +457,23 @@ func ManifestHandler(c *gin.Context) {
 	}
 
 	// Get the latest update for this channel and runtime version
-	log.Printf("[RequestID: %s] Searching for active updates in branch=%s, runtimeVersion=%s, buildNumber=%s",
+	log.Printf("[RequestID: %s] Searching for updates in branch=%s, runtimeVersion=%s, buildNumber=%s",
 		requestID, branch, runtimeVersion, buildNumber)
-
-	// First try to get active updates only
-	latestUpdate, err := update.GetLatestActiveUpdateForRuntimeVersion(branch, runtimeVersion, buildNumber)
+	latestUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion, buildNumber)
 	if err != nil {
-		log.Printf("[RequestID: %s] Error getting latest active update: %v", requestID, err)
-		// Fallback to older method if the active update lookup fails
-		latestUpdate, err = update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion, buildNumber)
-		if err != nil {
-			log.Printf("[RequestID: %s] Error getting fallback update: %v", requestID, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting latest update"})
-			return
-		}
+		log.Printf("[RequestID: %s] Error getting latest update: %v", requestID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting latest update"})
+		return
 	}
 
 	if latestUpdate == nil {
-		log.Printf("[RequestID: %s] No active update found for branch %s and runtime version %s",
+		log.Printf("[RequestID: %s] No update found for branch %s and runtime version %s",
 			requestID, branch, runtimeVersion)
 		c.JSON(http.StatusNotFound, gin.H{"error": "No update found"})
 		return
 	}
 
-	log.Printf("[RequestID: %s] Found latest update: ID=%s",
-		requestID, latestUpdate.UpdateId)
+	log.Printf("[RequestID: %s] Found latest update: ID=%s", requestID, latestUpdate.UpdateId)
 
 	// Return the update manifest
 	putUpdateInResponse(c.Writer, c.Request, *latestUpdate, platform, protocolVersion, requestID)

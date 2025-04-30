@@ -8,7 +8,6 @@ import (
 	"expo-open-ota/internal/types"
 	"fmt"
 	"io"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -366,41 +365,4 @@ func (b *S3Bucket) ListUpdates(branch string, runtimeVersion string) ([]string, 
 	}
 
 	return updates, nil
-}
-
-func (s *S3Bucket) DeleteFile(branch string, runtimeVersion string, updateId string, fileName string) error {
-	// Not fully implemented
-	log.Printf("S3Bucket.DeleteFile: %s/%s/%s/%s", branch, runtimeVersion, updateId, fileName)
-	return nil
-}
-
-func (s *S3Bucket) StoreUpdateDownload(download types.UpdateDownload) error {
-	// Not fully implemented
-	log.Printf("S3Bucket.StoreUpdateDownload: %s/%s/%s",
-		download.Branch, download.RuntimeVersion, download.UpdateId)
-	return nil
-}
-
-func (s *S3Bucket) GetUpdateDownloads(branch string, runtimeVersion string, updateId string) ([]types.UpdateDownload, error) {
-	// Not fully implemented
-	log.Printf("S3Bucket.GetUpdateDownloads: %s/%s/%s", branch, runtimeVersion, updateId)
-	return []types.UpdateDownload{}, nil
-}
-
-func (s *S3Bucket) ActivateUpdate(branch string, runtimeVersion string, updateId string) error {
-	// Not fully implemented
-	log.Printf("S3Bucket.ActivateUpdate: %s/%s/%s", branch, runtimeVersion, updateId)
-	return nil
-}
-
-func (s *S3Bucket) DeactivateUpdate(branch string, runtimeVersion string, updateId string) error {
-	// Not fully implemented
-	log.Printf("S3Bucket.DeactivateUpdate: %s/%s/%s", branch, runtimeVersion, updateId)
-	return nil
-}
-
-func (s *S3Bucket) GetActiveUpdates(branch string, runtimeVersion string) ([]types.Update, error) {
-	// Not fully implemented
-	log.Printf("S3Bucket.GetActiveUpdates: %s/%s", branch, runtimeVersion)
-	return []types.Update{}, nil
 }

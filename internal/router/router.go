@@ -91,12 +91,6 @@ func SetupRoutes(router *gin.Engine) {
 		api.GET("/runtime-versions/:branch", handlers.GetRuntimeVersionsHandler)
 		api.GET("/updates/:branch/:runtimeVersion", handlers.GetUpdatesHandler)
 
-		// Update control endpoints
-		api.POST("/updates/:branch/:runtimeVersion/:updateId/activate", middleware.AuthMiddleware, handlers.ActivateUpdateHandler)
-		api.POST("/updates/:branch/:runtimeVersion/:updateId/deactivate", middleware.AuthMiddleware, handlers.DeactivateUpdateHandler)
-		api.DELETE("/updates/:branch/:runtimeVersion/:updateId", middleware.AuthMiddleware, handlers.DeleteUpdateHandler)
-		api.GET("/updates/:branch/:runtimeVersion/:updateId/stats", middleware.AuthMiddleware, handlers.GetUpdateStatsHandler)
-
 		// Update API routes
 		api.POST("/update/upload/:branch", middleware.AuthMiddleware, handlers.UploadHandler)
 		api.POST("/update/request-upload-url/:branch", middleware.AuthMiddleware, handlers.RequestUploadUrlHandler)

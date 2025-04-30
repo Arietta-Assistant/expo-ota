@@ -40,7 +40,7 @@ export function AppSidebar() {
       <SidebarHeader className="p-4 border-b">
         <div className="flex items-center gap-3">
           <img src="/ariel-logo.png" alt="Ariel Logo" className="h-8 w-auto" />
-          <h1 className="text-lg font-semibold">Ariel OTA</h1>
+          <h1 className="text-lg font-semibold">Expo Open OTA</h1>
         </div>
       </SidebarHeader>
       <SidebarContent className="p-2">
