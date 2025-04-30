@@ -517,18 +517,47 @@ func (lb *LocalBucket) ActivateUpdate(branch string, runtimeVersion string, upda
 	// Set active flag
 	update.Active = true
 
-	// Create active marker file
-	activeFilePath := fmt.Sprintf("%s/%s/%s/%s/.active",
-		lb.BasePath, branch, runtimeVersion, updateId)
+	// Create multiple active marker files for compatibility with different client implementations
 
-	if err := os.WriteFile(activeFilePath, []byte("active"), 0644); err != nil {
-		return fmt.Errorf("error creating active marker: %w", err)
+	// Root update directory
+	rootActivePath := fmt.Sprintf("%s/%s/%s/%s/.active",
+		lb.BasePath, branch, runtimeVersion, updateId)
+	if err := os.WriteFile(rootActivePath, []byte("active"), 0644); err != nil {
+		log.Printf("Warning: Error creating root active marker: %v", err)
 	}
 
-	// Remove inactive marker if it exists
-	inactiveFilePath := fmt.Sprintf("%s/%s/%s/%s/.inactive",
+	// Also store without dot prefix
+	rootActivePathNoDot := fmt.Sprintf("%s/%s/%s/%s/active",
 		lb.BasePath, branch, runtimeVersion, updateId)
-	os.Remove(inactiveFilePath)
+	if err := os.WriteFile(rootActivePathNoDot, []byte("active"), 0644); err != nil {
+		log.Printf("Warning: Error creating root active marker (no dot): %v", err)
+	}
+
+	// Assets directory
+	assetsDir := fmt.Sprintf("%s/%s/%s/%s/assets",
+		lb.BasePath, branch, runtimeVersion, updateId)
+
+	// Create assets directory if it doesn't exist
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		log.Printf("Warning: Error creating assets directory: %v", err)
+	} else {
+		// Assets directory active marker
+		assetsActivePath := fmt.Sprintf("%s/active", assetsDir)
+		if err := os.WriteFile(assetsActivePath, []byte("active"), 0644); err != nil {
+			log.Printf("Warning: Error creating assets active marker: %v", err)
+		}
+	}
+
+	// Remove all inactive markers
+	inactivePaths := []string{
+		fmt.Sprintf("%s/%s/%s/%s/.inactive", lb.BasePath, branch, runtimeVersion, updateId),
+		fmt.Sprintf("%s/%s/%s/%s/inactive", lb.BasePath, branch, runtimeVersion, updateId),
+		fmt.Sprintf("%s/%s/%s/%s/assets/inactive", lb.BasePath, branch, runtimeVersion, updateId),
+	}
+
+	for _, path := range inactivePaths {
+		os.Remove(path)
+	}
 
 	return nil
 }
@@ -543,18 +572,47 @@ func (lb *LocalBucket) DeactivateUpdate(branch string, runtimeVersion string, up
 	// Set active flag
 	update.Active = false
 
-	// Create inactive marker file
-	inactiveFilePath := fmt.Sprintf("%s/%s/%s/%s/.inactive",
-		lb.BasePath, branch, runtimeVersion, updateId)
+	// Create multiple inactive marker files for compatibility with different client implementations
 
-	if err := os.WriteFile(inactiveFilePath, []byte("inactive"), 0644); err != nil {
-		return fmt.Errorf("error creating inactive marker: %w", err)
+	// Root update directory
+	rootInactivePath := fmt.Sprintf("%s/%s/%s/%s/.inactive",
+		lb.BasePath, branch, runtimeVersion, updateId)
+	if err := os.WriteFile(rootInactivePath, []byte("inactive"), 0644); err != nil {
+		log.Printf("Warning: Error creating root inactive marker: %v", err)
 	}
 
-	// Remove active marker if it exists
-	activeFilePath := fmt.Sprintf("%s/%s/%s/%s/.active",
+	// Also store without dot prefix
+	rootInactivePathNoDot := fmt.Sprintf("%s/%s/%s/%s/inactive",
 		lb.BasePath, branch, runtimeVersion, updateId)
-	os.Remove(activeFilePath)
+	if err := os.WriteFile(rootInactivePathNoDot, []byte("inactive"), 0644); err != nil {
+		log.Printf("Warning: Error creating root inactive marker (no dot): %v", err)
+	}
+
+	// Assets directory
+	assetsDir := fmt.Sprintf("%s/%s/%s/%s/assets",
+		lb.BasePath, branch, runtimeVersion, updateId)
+
+	// Create assets directory if it doesn't exist
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		log.Printf("Warning: Error creating assets directory: %v", err)
+	} else {
+		// Assets directory inactive marker
+		assetsInactivePath := fmt.Sprintf("%s/inactive", assetsDir)
+		if err := os.WriteFile(assetsInactivePath, []byte("inactive"), 0644); err != nil {
+			log.Printf("Warning: Error creating assets inactive marker: %v", err)
+		}
+	}
+
+	// Remove all active markers
+	activePaths := []string{
+		fmt.Sprintf("%s/%s/%s/%s/.active", lb.BasePath, branch, runtimeVersion, updateId),
+		fmt.Sprintf("%s/%s/%s/%s/active", lb.BasePath, branch, runtimeVersion, updateId),
+		fmt.Sprintf("%s/%s/%s/%s/assets/active", lb.BasePath, branch, runtimeVersion, updateId),
+	}
+
+	for _, path := range activePaths {
+		os.Remove(path)
+	}
 
 	return nil
 }

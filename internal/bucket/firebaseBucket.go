@@ -1065,51 +1065,125 @@ func (fb *FirebaseBucket) GetUpdateDownloads(branch string, runtimeVersion strin
 }
 
 func (fb *FirebaseBucket) ActivateUpdate(branch string, runtimeVersion string, updateId string) error {
+	// We need to upload multiple active marker files and remove all inactive markers
+
+	// First, get a reference to the update folder (for logging purposes)
+	updatePath := fmt.Sprintf("%s/%s/%s", branch, runtimeVersion, updateId)
+	log.Printf("Activating update at path: %s", updatePath)
+
+	// Create active markers in multiple locations
+	activeMarkers := []string{
+		".active",       // Root with dot
+		"active",        // Root without dot
+		"assets/active", // In assets directory
+	}
+
 	ctx := context.Background()
 
-	// Create a marker object for active status
-	activePath := fmt.Sprintf("%s/%s/%s/.active", branch, runtimeVersion, updateId)
+	// Create all active markers
+	for _, marker := range activeMarkers {
+		markerPath := fmt.Sprintf("%s/%s/%s/%s", branch, runtimeVersion, updateId, marker)
+		markerRef := fb.bucket.Object(markerPath)
 
-	writer := fb.bucket.Object(activePath).NewWriter(ctx)
-	writer.ContentType = "text/plain"
+		// Create marker file
+		w := markerRef.NewWriter(ctx)
+		if _, err := w.Write([]byte("active")); err != nil {
+			log.Printf("Warning: Error writing active marker at %s: %v", markerPath, err)
+			w.Close()
+			continue
+		}
 
-	if _, err := writer.Write([]byte("active")); err != nil {
-		writer.Close()
-		return fmt.Errorf("error creating active marker: %w", err)
+		if err := w.Close(); err != nil {
+			log.Printf("Warning: Error closing active marker writer at %s: %v", markerPath, err)
+		} else {
+			log.Printf("Created active marker at %s", markerPath)
+		}
 	}
 
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("error closing Firebase writer: %w", err)
+	// Remove all inactive markers
+	inactiveMarkers := []string{
+		".inactive",       // Root with dot
+		"inactive",        // Root without dot
+		"assets/inactive", // In assets directory
 	}
 
-	// Delete inactive marker if it exists
-	inactivePath := fmt.Sprintf("%s/%s/%s/.inactive", branch, runtimeVersion, updateId)
-	fb.bucket.Object(inactivePath).Delete(ctx)
+	// Delete all inactive markers
+	for _, marker := range inactiveMarkers {
+		markerPath := fmt.Sprintf("%s/%s/%s/%s", branch, runtimeVersion, updateId, marker)
+		markerRef := fb.bucket.Object(markerPath)
+
+		// Delete marker file
+		if err := markerRef.Delete(ctx); err != nil {
+			// Ignore not found errors
+			if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "doesn't exist") {
+				log.Printf("Warning: Error deleting inactive marker at %s: %v", markerPath, err)
+			}
+		} else {
+			log.Printf("Removed inactive marker at %s", markerPath)
+		}
+	}
 
 	return nil
 }
 
 func (fb *FirebaseBucket) DeactivateUpdate(branch string, runtimeVersion string, updateId string) error {
+	// We need to upload multiple inactive marker files and remove all active markers
+
+	// First, get a reference to the update folder (for logging purposes)
+	updatePath := fmt.Sprintf("%s/%s/%s", branch, runtimeVersion, updateId)
+	log.Printf("Deactivating update at path: %s", updatePath)
+
+	// Create inactive markers in multiple locations
+	inactiveMarkers := []string{
+		".inactive",       // Root with dot
+		"inactive",        // Root without dot
+		"assets/inactive", // In assets directory
+	}
+
 	ctx := context.Background()
 
-	// Create a marker object for inactive status
-	inactivePath := fmt.Sprintf("%s/%s/%s/.inactive", branch, runtimeVersion, updateId)
+	// Create all inactive markers
+	for _, marker := range inactiveMarkers {
+		markerPath := fmt.Sprintf("%s/%s/%s/%s", branch, runtimeVersion, updateId, marker)
+		markerRef := fb.bucket.Object(markerPath)
 
-	writer := fb.bucket.Object(inactivePath).NewWriter(ctx)
-	writer.ContentType = "text/plain"
+		// Create marker file
+		w := markerRef.NewWriter(ctx)
+		if _, err := w.Write([]byte("inactive")); err != nil {
+			log.Printf("Warning: Error writing inactive marker at %s: %v", markerPath, err)
+			w.Close()
+			continue
+		}
 
-	if _, err := writer.Write([]byte("inactive")); err != nil {
-		writer.Close()
-		return fmt.Errorf("error creating inactive marker: %w", err)
+		if err := w.Close(); err != nil {
+			log.Printf("Warning: Error closing inactive marker writer at %s: %v", markerPath, err)
+		} else {
+			log.Printf("Created inactive marker at %s", markerPath)
+		}
 	}
 
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("error closing Firebase writer: %w", err)
+	// Remove all active markers
+	activeMarkers := []string{
+		".active",       // Root with dot
+		"active",        // Root without dot
+		"assets/active", // In assets directory
 	}
 
-	// Delete active marker if it exists
-	activePath := fmt.Sprintf("%s/%s/%s/.active", branch, runtimeVersion, updateId)
-	fb.bucket.Object(activePath).Delete(ctx)
+	// Delete all active markers
+	for _, marker := range activeMarkers {
+		markerPath := fmt.Sprintf("%s/%s/%s/%s", branch, runtimeVersion, updateId, marker)
+		markerRef := fb.bucket.Object(markerPath)
+
+		// Delete marker file
+		if err := markerRef.Delete(ctx); err != nil {
+			// Ignore not found errors
+			if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "doesn't exist") {
+				log.Printf("Warning: Error deleting active marker at %s: %v", markerPath, err)
+			}
+		} else {
+			log.Printf("Removed active marker at %s", markerPath)
+		}
+	}
 
 	return nil
 }

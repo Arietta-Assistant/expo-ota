@@ -9,7 +9,6 @@ import (
 	"expo-open-ota/internal/metrics"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
-	"expo-open-ota/internal/usertracking"
 	"fmt"
 	"io"
 	"log"
@@ -217,6 +216,33 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 	manifestJSON, _ := json.MarshalIndent(manifest, "", "  ")
 	log.Printf("[RequestID: %s] Sending manifest to client: %s", requestID, string(manifestJSON))
 
+	// Check if this update is inactive (one last check before sending)
+	isInactive := false
+
+	// Get bucket for file access
+	resolvedBucket := bucket.GetBucket()
+
+	// Check for inactive markers in multiple locations
+	inactiveMarkers := []string{".inactive", "inactive", "assets/inactive"}
+	for _, marker := range inactiveMarkers {
+		markerFile, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, marker)
+		if err == nil && markerFile != nil {
+			markerFile.Close()
+			log.Printf("[RequestID: %s] Found inactive marker at %s/%s/%s/%s - update is inactive",
+				requestID, lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, marker)
+			isInactive = true
+			break
+		}
+	}
+
+	// If the update is inactive, don't deliver it
+	if isInactive {
+		log.Printf("[RequestID: %s] Update %s is inactive, not delivering to client",
+			requestID, lastUpdate.UpdateId)
+		putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
+		return
+	}
+
 	putResponse(w, r, manifest, "manifest", lastUpdate.RuntimeVersion, protocolVersion, requestID)
 }
 
@@ -340,45 +366,6 @@ func ManifestHandler(c *gin.Context) {
 		log.Printf("[RequestID: %s]   %s: %v", requestID, k, v)
 	}
 
-	// Extract firebase_token from headers
-	firebaseToken := c.GetHeader("firebase_token")
-
-	// If not found in direct headers, try to extract firebase_token from Expo-Extra-Params
-	if firebaseToken == "" {
-		extraParams := c.GetHeader("Expo-Extra-Params")
-		if extraParams != "" {
-			log.Printf("[RequestID: %s] Parsing Expo-Extra-Params for firebase_token", requestID)
-			extraParamsParts := strings.Split(extraParams, ",")
-			for _, part := range extraParamsParts {
-				part = strings.TrimSpace(part)
-				// Check for both firebase_token and firebase_token formats
-				if strings.Contains(part, "firebase_token") || strings.Contains(part, "firebase_token") {
-					// Extract the value between quotes
-					start := strings.Index(part, "\"")
-					end := strings.LastIndex(part, "\"")
-					if start != -1 && end != -1 && end > start {
-						firebaseToken = part[start+1 : end]
-						log.Printf("[RequestID: %s] Found firebase token in Expo-Extra-Params", requestID)
-					}
-					break
-				}
-			}
-		}
-	}
-
-	// Extract device ID for user tracking
-	deviceId := c.GetHeader("expo-device-id")
-	if deviceId == "" {
-		// Use IP address + user agent as fallback device identifier
-		deviceId = c.ClientIP() + "-" + c.Request.UserAgent()
-	}
-
-	if firebaseToken != "" {
-		log.Printf("[RequestID: %s] Firebase token is present (length: %d)", requestID, len(firebaseToken))
-	} else {
-		log.Printf("[RequestID: %s] No firebase token found in request", requestID)
-	}
-
 	// Extract build number from Expo-Extra-Params
 	buildNumber := ""
 	extraParams := c.GetHeader("Expo-Extra-Params")
@@ -490,21 +477,6 @@ func ManifestHandler(c *gin.Context) {
 
 	log.Printf("[RequestID: %s] Found latest update: ID=%s",
 		requestID, latestUpdate.UpdateId)
-
-	// If a firebase token is present, track this user and device
-	if firebaseToken != "" && latestUpdate != nil {
-		go func() {
-			// Use usertracking.TrackAssetDownload asynchronously
-			usertracking.TrackAssetDownload(
-				branch,
-				runtimeVersion,
-				latestUpdate.UpdateId,
-				platform,
-				firebaseToken,
-				deviceId,
-			)
-		}()
-	}
 
 	// Return the update manifest
 	putUpdateInResponse(c.Writer, c.Request, *latestUpdate, platform, protocolVersion, requestID)

@@ -91,18 +91,25 @@ func GetLatestActiveUpdateForRuntimeVersion(branch string, runtimeVersion string
 func hasStateFile(update types.Update, stateFileName string) bool {
 	resolvedBucket := bucket.GetBucket()
 
-	// Try with dot prefix first
-	file, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, "."+stateFileName)
-	if err == nil && file != nil {
-		file.Close()
-		return true
+	// List of possible locations for the state marker file
+	pathsToCheck := []string{
+		// With dot prefix in root dir
+		"." + stateFileName,
+		// No dot prefix in root dir
+		stateFileName,
+		// In assets directory
+		"assets/" + stateFileName,
 	}
 
-	// Also try without dot prefix for compatibility
-	file, err = resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, stateFileName)
-	if err == nil && file != nil {
-		file.Close()
-		return true
+	// Check each potential path
+	for _, path := range pathsToCheck {
+		file, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, path)
+		if err == nil && file != nil {
+			file.Close()
+			log.Printf("Found %s marker at path: %s/%s/%s/%s",
+				stateFileName, update.Branch, update.RuntimeVersion, update.UpdateId, path)
+			return true
+		}
 	}
 
 	return false
