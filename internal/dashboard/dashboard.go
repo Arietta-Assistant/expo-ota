@@ -130,12 +130,31 @@ func GetUpdates(branch, runtimeVersion string) ([]types.Update, error) {
 		return nil, err
 	}
 
-	// Enhance updates with build number information
+	// Enhance updates with build number information and check active state
 	for i := range updates {
+		// Extract build number
 		buildNum := ExtractBuildNumber(updates[i].UpdateId)
 		if buildNum > 0 {
 			updates[i].BuildNumber = strconv.Itoa(buildNum)
 		}
+
+		// Check for active/inactive state markers
+		activeFile, err := resolvedBucket.GetFile(branch, runtimeVersion, updates[i].UpdateId, ".active")
+		if err == nil && activeFile != nil {
+			activeFile.Close()
+			updates[i].Active = true
+			continue
+		}
+
+		inactiveFile, err := resolvedBucket.GetFile(branch, runtimeVersion, updates[i].UpdateId, ".inactive")
+		if err == nil && inactiveFile != nil {
+			inactiveFile.Close()
+			updates[i].Active = false
+			continue
+		}
+
+		// If no explicit marker, default to active
+		updates[i].Active = true
 	}
 
 	// Sort updates by creation time (newest first)

@@ -155,6 +155,7 @@ func GetUpdatesHandler(c *gin.Context) {
 			"branch":         update.Branch,
 			"runtimeVersion": update.RuntimeVersion,
 			"createdAt":      update.CreatedAt,
+			"active":         update.Active,
 		}
 
 		// Add build number if available
