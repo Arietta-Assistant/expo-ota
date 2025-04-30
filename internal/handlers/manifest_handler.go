@@ -224,7 +224,14 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 
 	// Check for inactive markers in multiple locations
 	inactiveMarkers := []string{".inactive", "inactive", "assets/inactive"}
+
+	log.Printf("[RequestID: %s] Final check: Looking for inactive markers for update %s",
+		requestID, lastUpdate.UpdateId)
+
 	for _, marker := range inactiveMarkers {
+		log.Printf("[RequestID: %s] Checking path: %s/%s/%s/%s",
+			requestID, lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, marker)
+
 		markerFile, err := resolvedBucket.GetFile(lastUpdate.Branch, lastUpdate.RuntimeVersion, lastUpdate.UpdateId, marker)
 		if err == nil && markerFile != nil {
 			markerFile.Close()
@@ -242,6 +249,9 @@ func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate type
 		putNoUpdateAvailableInResponse(w, r, lastUpdate.RuntimeVersion, protocolVersion, requestID)
 		return
 	}
+
+	log.Printf("[RequestID: %s] Update %s is active (no inactive markers found), delivering to client",
+		requestID, lastUpdate.UpdateId)
 
 	putResponse(w, r, manifest, "manifest", lastUpdate.RuntimeVersion, protocolVersion, requestID)
 }

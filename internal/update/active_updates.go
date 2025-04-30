@@ -29,16 +29,23 @@ func GetLatestActiveUpdateForRuntimeVersion(branch string, runtimeVersion string
 			continue
 		}
 
-		// Check if this update is marked as active
-		// By default, updates are considered active if not explicitly marked inactive
-		if hasStateFile(update, "active") || !hasStateFile(update, "inactive") {
-			update.Active = true
-			activeUpdates = append(activeUpdates, update)
-			log.Printf("Update %s is active", update.UpdateId)
-		} else {
+		// Check if this update is explicitly marked as inactive
+		if hasStateFile(update, "inactive") {
 			update.Active = false
 			inactiveUpdates = append(inactiveUpdates, update)
-			log.Printf("Update %s is inactive, skipping", update.UpdateId)
+			log.Printf("Update %s is explicitly marked inactive, skipping", update.UpdateId)
+			continue
+		}
+
+		// Either it has an active marker or no marker at all, which makes it active by default
+		update.Active = true
+		activeUpdates = append(activeUpdates, update)
+
+		// If it has an explicit active marker, log it
+		if hasStateFile(update, "active") {
+			log.Printf("Update %s is explicitly marked active", update.UpdateId)
+		} else {
+			log.Printf("Update %s has no active/inactive markers, treating as active by default", update.UpdateId)
 		}
 	}
 
@@ -99,19 +106,31 @@ func hasStateFile(update types.Update, stateFileName string) bool {
 		stateFileName,
 		// In assets directory
 		"assets/" + stateFileName,
+		// In assets directory without dot
+		"assets/" + stateFileName,
 	}
 
 	// Check each potential path
+	log.Printf("ACTIVE-DEBUG: Checking for %s state markers for update %s in %s/%s",
+		stateFileName, update.UpdateId, update.Branch, update.RuntimeVersion)
+
 	for _, path := range pathsToCheck {
+		log.Printf("ACTIVE-DEBUG: Looking for %s marker at path: %s/%s/%s/%s",
+			stateFileName, update.Branch, update.RuntimeVersion, update.UpdateId, path)
+
 		file, err := resolvedBucket.GetFile(update.Branch, update.RuntimeVersion, update.UpdateId, path)
 		if err == nil && file != nil {
 			file.Close()
-			log.Printf("Found %s marker at path: %s/%s/%s/%s",
+			log.Printf("ACTIVE-DEBUG: Found %s marker at path: %s/%s/%s/%s",
 				stateFileName, update.Branch, update.RuntimeVersion, update.UpdateId, path)
 			return true
+		} else if err != nil {
+			log.Printf("ACTIVE-DEBUG: Error checking for %s marker at %s/%s/%s/%s: %v",
+				stateFileName, update.Branch, update.RuntimeVersion, update.UpdateId, path, err)
 		}
 	}
 
+	log.Printf("ACTIVE-DEBUG: No %s marker found for update %s", stateFileName, update.UpdateId)
 	return false
 }
 
