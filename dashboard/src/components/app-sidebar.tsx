@@ -38,7 +38,10 @@ export function AppSidebar() {
   return (
     <Sidebar className="w-64 bg-white border-r border-gray-200">
       <SidebarHeader className="p-4 border-b">
-        <h1 className="text-lg font-semibold">Expo Open OTA</h1>
+        <div className="flex items-center gap-3">
+          <img src="/ariel-logo.png" alt="Ariel Logo" className="h-8 w-auto" />
+          <h1 className="text-lg font-semibold">Ariel OTA</h1>
+        </div>
       </SidebarHeader>
       <SidebarContent className="p-2">
         <SidebarGroup>

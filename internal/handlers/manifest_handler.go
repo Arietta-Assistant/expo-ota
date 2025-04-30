@@ -9,6 +9,7 @@ import (
 	"expo-open-ota/internal/metrics"
 	"expo-open-ota/internal/types"
 	"expo-open-ota/internal/update"
+	"expo-open-ota/internal/usertracking"
 	"fmt"
 	"io"
 	"log"
@@ -365,6 +366,13 @@ func ManifestHandler(c *gin.Context) {
 		}
 	}
 
+	// Extract device ID for user tracking
+	deviceId := c.GetHeader("expo-device-id")
+	if deviceId == "" {
+		// Use IP address + user agent as fallback device identifier
+		deviceId = c.ClientIP() + "-" + c.Request.UserAgent()
+	}
+
 	if firebaseToken != "" {
 		log.Printf("[RequestID: %s] Firebase token is present (length: %d)", requestID, len(firebaseToken))
 	} else {
@@ -457,23 +465,46 @@ func ManifestHandler(c *gin.Context) {
 	}
 
 	// Get the latest update for this channel and runtime version
-	log.Printf("[RequestID: %s] Searching for updates in branch=%s, runtimeVersion=%s, buildNumber=%s",
+	log.Printf("[RequestID: %s] Searching for active updates in branch=%s, runtimeVersion=%s, buildNumber=%s",
 		requestID, branch, runtimeVersion, buildNumber)
-	latestUpdate, err := update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion, buildNumber)
+
+	// First try to get active updates only
+	latestUpdate, err := update.GetLatestActiveUpdateForRuntimeVersion(branch, runtimeVersion, buildNumber)
 	if err != nil {
-		log.Printf("[RequestID: %s] Error getting latest update: %v", requestID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting latest update"})
-		return
+		log.Printf("[RequestID: %s] Error getting latest active update: %v", requestID, err)
+		// Fallback to older method if the active update lookup fails
+		latestUpdate, err = update.GetLatestUpdateBundlePathForRuntimeVersion(branch, runtimeVersion, buildNumber)
+		if err != nil {
+			log.Printf("[RequestID: %s] Error getting fallback update: %v", requestID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting latest update"})
+			return
+		}
 	}
 
 	if latestUpdate == nil {
-		log.Printf("[RequestID: %s] No update found for branch %s and runtime version %s",
+		log.Printf("[RequestID: %s] No active update found for branch %s and runtime version %s",
 			requestID, branch, runtimeVersion)
 		c.JSON(http.StatusNotFound, gin.H{"error": "No update found"})
 		return
 	}
 
-	log.Printf("[RequestID: %s] Found latest update: ID=%s", requestID, latestUpdate.UpdateId)
+	log.Printf("[RequestID: %s] Found latest update: ID=%s, Active=%v",
+		requestID, latestUpdate.UpdateId, latestUpdate.Active)
+
+	// If a firebase token is present, track this user and device
+	if firebaseToken != "" && latestUpdate != nil {
+		go func() {
+			// Use usertracking.TrackAssetDownload asynchronously
+			usertracking.TrackAssetDownload(
+				branch,
+				runtimeVersion,
+				latestUpdate.UpdateId,
+				platform,
+				firebaseToken,
+				deviceId,
+			)
+		}()
+	}
 
 	// Return the update manifest
 	putUpdateInResponse(c.Writer, c.Request, *latestUpdate, platform, protocolVersion, requestID)

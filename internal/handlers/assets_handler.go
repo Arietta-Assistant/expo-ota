@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"expo-open-ota/internal/assets"
+	"expo-open-ota/internal/usertracking"
 	"log"
 	"net/http"
 	"strings"
@@ -35,7 +36,7 @@ func AssetsHandler(c *gin.Context) {
 			for _, part := range extraParamsParts {
 				part = strings.TrimSpace(part)
 				// Check for both firebase_token and firebase_token formats
-				if strings.Contains(part, "firebase_token") || strings.Contains(part, "firebase_token") {
+				if strings.Contains(part, "firebase_token") {
 					// Extract the value between quotes
 					start := strings.Index(part, "\"")
 					end := strings.LastIndex(part, "\"")
@@ -53,6 +54,13 @@ func AssetsHandler(c *gin.Context) {
 		log.Printf("[RequestID: %s] Firebase token is present (length: %d)", requestID, len(firebaseToken))
 	} else {
 		log.Printf("[RequestID: %s] No firebase token found in request", requestID)
+	}
+
+	// Extract device ID from headers or generate one from request
+	deviceId := c.GetHeader("expo-device-id")
+	if deviceId == "" {
+		// Use IP address + user agent as fallback device identifier
+		deviceId = c.ClientIP() + "-" + c.Request.UserAgent()
 	}
 
 	// Check if we're using path parameters instead
@@ -76,6 +84,11 @@ func AssetsHandler(c *gin.Context) {
 		// Log the path components
 		log.Printf("[RequestID: %s] Path request: branch=%s, runtimeVersion=%s, updateId=%s, assetPath=%s",
 			requestID, branch, runtimeVersion, updateId, assetPath)
+
+		// Track this download with user information
+		if firebaseToken != "" {
+			go usertracking.TrackAssetDownload(branch, runtimeVersion, updateId, platform, firebaseToken, deviceId)
+		}
 
 		// Create a specific request with the update ID already known
 		req := assets.AssetsRequest{
@@ -141,6 +154,19 @@ func AssetsHandler(c *gin.Context) {
 	if branch == "" {
 		branch = "ota-updates" // Default branch
 		log.Printf("[RequestID: %s] Using default branch: %s", requestID, branch)
+	}
+
+	// Extract updateId from assetPath (if available)
+	updateId := ""
+	// Example pattern: /assets/branch/runtime/update-id/bundle.js
+	pathParts := strings.Split(assetPath, "/")
+	if len(pathParts) >= 3 {
+		updateId = pathParts[2] // This position might vary based on your URL structure
+	}
+
+	// Track this download with user information
+	if firebaseToken != "" && updateId != "" {
+		go usertracking.TrackAssetDownload(branch, runtimeVersion, updateId, platform, firebaseToken, deviceId)
 	}
 
 	// Create the request object
