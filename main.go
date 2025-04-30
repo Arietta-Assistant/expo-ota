@@ -49,6 +49,11 @@ func main() {
 func logEnvironmentStatus() {
 	// Check and log dashboard status
 	dashboardEnabled := config.GetEnv("USE_DASHBOARD")
+	if dashboardEnabled == "" {
+		log.Println("USE_DASHBOARD not set, enabling by default")
+		os.Setenv("USE_DASHBOARD", "true")
+		dashboardEnabled = "true"
+	}
 	log.Printf("Dashboard enabled: %s", dashboardEnabled)
 
 	if dashboardEnabled == "true" {

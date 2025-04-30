@@ -13,6 +13,11 @@ func TrackAssetDownload(branch, runtimeVersion, updateId, platform, firebaseToke
 	log.Printf("Tracking asset download: branch=%s, runtime=%s, updateId=%s, platform=%s",
 		branch, runtimeVersion, updateId, platform)
 
+	// If device ID is not provided, use a default
+	if deviceId == "" {
+		deviceId = "unknown-device"
+	}
+
 	// Get the bucket storage
 	storage := bucket.GetBucket()
 
@@ -31,12 +36,24 @@ func TrackAssetDownload(branch, runtimeVersion, updateId, platform, firebaseToke
 		Branch:         branch,
 	}
 
-	// Store the download record
-	err := storage.StoreUpdateDownload(download)
-	if err != nil {
-		log.Printf("Error storing update download: %v", err)
-	} else {
-		log.Printf("Successfully recorded download for user %s, update %s", userId, updateId)
+	// Store the download record, with timeout protection
+	done := make(chan bool, 1)
+	go func() {
+		err := storage.StoreUpdateDownload(download)
+		if err != nil {
+			log.Printf("Error storing update download: %v", err)
+		} else {
+			log.Printf("Successfully recorded download for user %s, update %s", userId, updateId)
+		}
+		done <- true
+	}()
+
+	// Use a timeout to prevent hanging
+	select {
+	case <-done:
+		// Storage operation completed successfully
+	case <-time.After(5 * time.Second):
+		log.Printf("Warning: Update download tracking timed out after 5 seconds")
 	}
 }
 
