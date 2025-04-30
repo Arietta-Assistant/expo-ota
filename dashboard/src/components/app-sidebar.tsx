@@ -13,6 +13,9 @@ import {
 import {HardDriveDownload, PowerOff, Settings} from 'lucide-react';
 import clsx from 'clsx';
 
+// Import the logo from assets directory
+import ArielLogo from '@/assets/ariel-logo.png';
+
 const items = [
   {
     title: 'Updates',
@@ -39,8 +42,8 @@ export function AppSidebar() {
     <Sidebar className="w-64 bg-white border-r border-gray-200">
       <SidebarHeader className="p-4 border-b">
         <div className="flex items-center gap-3">
-          <img src="/ariel-logo.png" alt="Ariel Logo" className="h-8 w-auto" />
-          <h1 className="text-lg font-semibold">Expo Open OTA</h1>
+          <img src={ArielLogo} alt="Ariel Logo" className="h-8 w-auto" />
+          <h1 className="text-lg font-semibold">ARIEL OTA</h1>
         </div>
       </SidebarHeader>
       <SidebarContent className="p-2">
