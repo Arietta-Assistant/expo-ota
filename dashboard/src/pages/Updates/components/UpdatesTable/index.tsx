@@ -13,7 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import AppleIcon from '@/assets/apple.svg';
 import AndroidIcon from '@/assets/android.svg';
 
@@ -40,6 +40,16 @@ export const UpdatesTable = ({
     queryFn: () => api.getUpdates(branch, runtimeVersion),
   });
 
+  // Log date values for debugging
+  useEffect(() => {
+    if (data && data.length > 0) {
+      console.log('Date values from API:', data.map(item => ({
+        updateId: item.updateId,
+        rawDate: item.createdAt
+      })));
+    }
+  }, [data]);
+
   const handleLoadMore = () => {
     setVisibleCount(prev => prev + 4);
   };
@@ -50,6 +60,13 @@ export const UpdatesTable = ({
   // Format date in a robust way that handles various formats
   const formatDate = (dateString: string) => {
     try {
+      // Handle extremely large numbers (like 6480000000000000)
+      if (/^\d{15,}$/.test(dateString)) {
+        // These appear to be malformatted dates, possibly using a non-standard format
+        // For now, show a more readable error and the raw value for debugging
+        return `Unknown format (${dateString})`;
+      }
+      
       // Try to parse the date string using Date constructor
       const date = new Date(dateString);
       
@@ -200,7 +217,7 @@ export const UpdatesTable = ({
                   <CardContent className="p-4 pt-2 space-y-3">
                     <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm">
                       <Smartphone className="w-4 h-4 text-muted-foreground" />
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 flex-wrap">
                         {platforms.includes('ios') && (
                           <>
                             <img src={AppleIcon} alt="iOS" className="w-4 h-4" />
@@ -214,7 +231,12 @@ export const UpdatesTable = ({
                           </>
                         )}
                         {platforms.length === 0 && (
-                          <Badge variant="outline" className="text-xs">Unknown</Badge>
+                          // If no platform is detected, assume it might be a universal build
+                          <>
+                            <img src={AppleIcon} alt="iOS" className="w-4 h-4 opacity-50" />
+                            <img src={AndroidIcon} alt="Android" className="w-4 h-4 opacity-50" />
+                            <Badge variant="outline" className="text-xs">Universal</Badge>
+                          </>
                         )}
                       </div>
                       
@@ -237,7 +259,12 @@ export const UpdatesTable = ({
                       <Calendar className="w-4 h-4 text-muted-foreground" />
                       <div className="truncate">
                         <span className="text-xs text-muted-foreground">
-                          {update.createdAt ? formatDate(update.createdAt) : 'Unknown'}
+                          {update.createdAt ? 
+                            // Special handling for the known problematic formats
+                            /^\d{15,}$/.test(update.createdAt) ? 
+                              "Not available" : 
+                              formatDate(update.createdAt) 
+                            : 'Unknown'}
                         </span>
                       </div>
                       
