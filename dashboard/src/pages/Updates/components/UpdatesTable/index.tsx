@@ -17,6 +17,15 @@ import { useState } from 'react';
 import AppleIcon from '@/assets/apple.svg';
 import AndroidIcon from '@/assets/android.svg';
 
+// Define types for the update data
+interface Update {
+  updateUUID: string;
+  createdAt: string;
+  updateId: string;
+  platform?: string;
+  commitHash?: string;
+}
+
 export const UpdatesTable = ({
   branch,
   runtimeVersion,
@@ -38,23 +47,90 @@ export const UpdatesTable = ({
   const visibleUpdates = data ? data.slice(0, visibleCount) : [];
   const hasMore = data ? visibleCount < data.length : false;
 
+  // Format date in a robust way that handles various formats
   const formatDate = (dateString: string) => {
     try {
+      // Try to parse the date string using Date constructor
       const date = new Date(dateString);
-      if (isNaN(date.getTime())) {
-        return 'Invalid date';
+      
+      // Check if date is valid
+      if (!isNaN(date.getTime())) {
+        // Check if year is unreasonable (like 207313)
+        if (date.getFullYear() > 3000) {
+          // This is likely a timestamp in milliseconds since Unix epoch
+          // Try to interpret as seconds instead
+          const secondsDate = new Date(parseInt(dateString, 10) * 1000);
+          if (!isNaN(secondsDate.getTime()) && secondsDate.getFullYear() < 3000) {
+            return secondsDate.toLocaleDateString('en-GB', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+          }
+          
+          // If still invalid, try to use just the date component to debug
+          return `Invalid date format: ${dateString}`;
+        }
+        
+        return date.toLocaleDateString('en-GB', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
       }
       
-      return date.toLocaleDateString('en-GB', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: 'numeric',
-      });
-    } catch {
-      return 'Invalid date';
+      // If it's just a number, it might be a Unix timestamp
+      if (/^\d+$/.test(dateString)) {
+        const timestampDate = new Date(parseInt(dateString, 10) * 1000);
+        if (!isNaN(timestampDate.getTime())) {
+          return timestampDate.toLocaleDateString('en-GB', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+        }
+      }
+      
+      return `Invalid date: ${dateString}`;
+    } catch (error) {
+      console.error("Date parsing error:", error);
+      return `Error parsing date: ${dateString}`;
     }
+  };
+
+  // Determine platform(s) from update ID and platform field
+  const getPlatformInfo = (update: Update): string[] => {
+    const platforms: string[] = [];
+    
+    // Check explicit platform field
+    if (update.platform) {
+      const platform = update.platform.toLowerCase();
+      if (platform === 'ios') {
+        platforms.push('ios');
+      }
+      if (platform === 'android') {
+        platforms.push('android');
+      }
+    }
+    
+    // Check update ID for platform hints if no platform explicitly specified
+    if (platforms.length === 0 && update.updateId) {
+      const updateId = update.updateId.toLowerCase();
+      if (updateId.includes('ios')) {
+        platforms.push('ios');
+      }
+      if (updateId.includes('android')) {
+        platforms.push('android');
+      }
+    }
+    
+    return platforms;
   };
 
   // Extract build number from update ID
@@ -111,6 +187,8 @@ export const UpdatesTable = ({
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             {visibleUpdates.map((update) => {
               const { displayName } = extractBuildInfo(update.updateId || '');
+              const platforms = getPlatformInfo(update);
+              
               return (
                 <Card key={update.updateId} className="overflow-hidden">
                   <CardHeader className="p-4 pb-2 bg-muted/20">
@@ -123,19 +201,19 @@ export const UpdatesTable = ({
                     <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm">
                       <Smartphone className="w-4 h-4 text-muted-foreground" />
                       <div className="flex items-center gap-1">
-                        {update.platform === 'ios' && (
+                        {platforms.includes('ios') && (
                           <>
                             <img src={AppleIcon} alt="iOS" className="w-4 h-4" />
                             <Badge variant="outline" className="text-xs">iOS</Badge>
                           </>
                         )}
-                        {update.platform === 'android' && (
+                        {platforms.includes('android') && (
                           <>
                             <img src={AndroidIcon} alt="Android" className="w-4 h-4" />
                             <Badge variant="outline" className="text-xs">Android</Badge>
                           </>
                         )}
-                        {!update.platform && (
+                        {platforms.length === 0 && (
                           <Badge variant="outline" className="text-xs">Unknown</Badge>
                         )}
                       </div>
