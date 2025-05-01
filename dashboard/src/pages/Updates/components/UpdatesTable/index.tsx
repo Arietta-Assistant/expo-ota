@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api.ts';
 import { ApiError } from '@/components/APIError';
-import { GitBranch, Milestone, Rss, Calendar, Hash, Smartphone, ChevronDown } from 'lucide-react';
+import { GitBranch, Milestone, Rss, Calendar, Hash, Smartphone, ChevronDown, Tag } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -57,6 +57,21 @@ export const UpdatesTable = ({
     }
   };
 
+  // Extract build number from update ID
+  const extractBuildInfo = (updateId: string) => {
+    const buildMatch = updateId.match(/build-(\d+)/i);
+    if (buildMatch && buildMatch[1]) {
+      return {
+        buildNumber: buildMatch[1],
+        displayName: `Build ${buildMatch[1]}`
+      };
+    }
+    return {
+      buildNumber: null,
+      displayName: 'Unknown Build'
+    };
+  };
+
   return (
     <div className="w-full flex-1">
       <Breadcrumb className="mb-4">
@@ -94,60 +109,68 @@ export const UpdatesTable = ({
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            {visibleUpdates.map((update) => (
-              <Card key={update.updateId} className="overflow-hidden">
-                <CardHeader className="p-4 pb-2 bg-muted/20">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Rss className="w-4 h-4" />
-                    <span className="truncate">{update.updateId || 'Unknown'}</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-4 pt-2 space-y-3">
-                  <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm">
-                    <Smartphone className="w-4 h-4 text-muted-foreground" />
-                    <div className="flex items-center gap-1">
-                      {update.platform === 'ios' && (
-                        <>
-                          <img src={AppleIcon} alt="iOS" className="w-4 h-4" />
-                          <Badge variant="outline" className="text-xs">iOS</Badge>
-                        </>
-                      )}
-                      {update.platform === 'android' && (
-                        <>
-                          <img src={AndroidIcon} alt="Android" className="w-4 h-4" />
-                          <Badge variant="outline" className="text-xs">Android</Badge>
-                        </>
-                      )}
-                      {!update.platform && (
-                        <Badge variant="outline" className="text-xs">Unknown</Badge>
-                      )}
+            {visibleUpdates.map((update) => {
+              const { displayName } = extractBuildInfo(update.updateId || '');
+              return (
+                <Card key={update.updateId} className="overflow-hidden">
+                  <CardHeader className="p-4 pb-2 bg-muted/20">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Tag className="w-4 h-4" />
+                      <span className="truncate font-bold">{displayName}</span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-2 space-y-3">
+                    <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm">
+                      <Smartphone className="w-4 h-4 text-muted-foreground" />
+                      <div className="flex items-center gap-1">
+                        {update.platform === 'ios' && (
+                          <>
+                            <img src={AppleIcon} alt="iOS" className="w-4 h-4" />
+                            <Badge variant="outline" className="text-xs">iOS</Badge>
+                          </>
+                        )}
+                        {update.platform === 'android' && (
+                          <>
+                            <img src={AndroidIcon} alt="Android" className="w-4 h-4" />
+                            <Badge variant="outline" className="text-xs">Android</Badge>
+                          </>
+                        )}
+                        {!update.platform && (
+                          <Badge variant="outline" className="text-xs">Unknown</Badge>
+                        )}
+                      </div>
+                      
+                      <Rss className="w-4 h-4 text-muted-foreground" />
+                      <div className="text-xs text-muted-foreground truncate">
+                        <span title={update.updateId}>{update.updateId || 'Unknown'}</span>
+                      </div>
+                      
+                      <Hash className="w-4 h-4 text-muted-foreground" />
+                      <div>
+                        {update.commitHash ? (
+                          <Badge variant="secondary" className="text-xs">
+                            {typeof update.commitHash === 'string' ? update.commitHash.slice(0, 7) : update.commitHash}
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">N/A</Badge>
+                        )}
+                      </div>
+                      
+                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                      <div className="truncate">
+                        <span className="text-xs text-muted-foreground">
+                          {update.createdAt ? formatDate(update.createdAt) : 'Unknown'}
+                        </span>
+                      </div>
+                      
+                      <div className="col-span-2 mt-1 text-xs text-muted-foreground overflow-hidden text-ellipsis">
+                        <span className="font-medium">UUID:</span> {update.updateUUID || 'N/A'}
+                      </div>
                     </div>
-                    
-                    <Hash className="w-4 h-4 text-muted-foreground" />
-                    <div>
-                      {update.commitHash ? (
-                        <Badge variant="secondary" className="text-xs">
-                          {typeof update.commitHash === 'string' ? update.commitHash.slice(0, 7) : update.commitHash}
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-xs">N/A</Badge>
-                      )}
-                    </div>
-                    
-                    <Calendar className="w-4 h-4 text-muted-foreground" />
-                    <div className="truncate">
-                      <span className="text-xs text-muted-foreground">
-                        {update.createdAt ? formatDate(update.createdAt) : 'Unknown'}
-                      </span>
-                    </div>
-                    
-                    <div className="col-span-2 mt-1 text-xs text-muted-foreground overflow-hidden text-ellipsis">
-                      <span className="font-medium">UUID:</span> {update.updateUUID || 'N/A'}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
           
           {hasMore && (
